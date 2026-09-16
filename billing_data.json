@@ -235,7 +235,7 @@
   ],
   "invoice_counter": 1056,
   "iva_rate": 0.16,
-  "exchange_rate": 842.2067,
+  "exchange_rate": 846.5131,
   "include_pending_in_dashboard": false,
   "auto_update_rate": true,
   "rate_source": "oficial",
