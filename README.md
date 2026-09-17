@@ -1,55 +1,78 @@
 <!-- markdownlint-disable MD033 -->
 <p align="center">
-  <img src="img/logo.png" alt="AS Facturation Logo" width="150" style="border-radius: 20px;">
+  <img src="img/logo.png" alt="AS Facturation Logo" width="140" style="border-radius: 20px;">
 </p>
 
-<h1 align="center">🧾 Sistema de facturación AS  — v3.4</h1>
+<h1 align="center">🧾 AS Facturation</h1>
 
 <p align="center">
-  <strong>Sistema de facturación de escritorio moderno, rápido y seguro</strong><br>
-  Gestión de ventas, inventario, clientes y reportes con interfaz gráfica elegante.
+  <strong>Sistema de facturación de escritorio para pequeñas y medianas empresas</strong><br>
+  Ventas, inventario, clientes, facturación y reportes en una sola herramienta, <em>sin conexión a internet</em>.
 </p>
 
 <p align="center">
-  <a href="https://github.com/AndreDev66/AS-Facturation-Workspace/blob/main/LICENSE"><img src="https://img.shields.io/badge/Licencia-MIT-blue.svg" alt="Licencia MIT"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg" alt="Python 3.10+"></a>
-  <a href="https://github.com/AndreDev66/AS-Facturation-Workspace"><img src="https://img.shields.io/badge/Estado-En%20desarrollo-yellow" alt="Estado"></a>
-  <img src="https://img.shields.io/badge/UI-CustomTkinter-1f8a4c" alt="UI CustomTkinter">
+  <img src="https://img.shields.io/badge/Versi%C3%B3n-3.4-4F46E5?style=for-the-badge" alt="Versión 3.4">
+  <img src="https://img.shields.io/badge/Estado-En%20desarrollo-FF9800?style=for-the-badge" alt="Estado: En desarrollo">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/UI-CustomTkinter-1F8A4C?style=for-the-badge" alt="CustomTkinter">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite">
+  <img src="https://img.shields.io/badge/Excel-217346?style=for-the-badge&logo=microsoft-excel&logoColor=white" alt="Exportación a Excel">
+  <img src="https://img.shields.io/badge/PDF-EC1C24?style=for-the-badge&logo=adobe-acrobat-reader&logoColor=white" alt="Exportación a PDF">
+  <img src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
+  <img src="https://img.shields.io/badge/Licencia-MIT-22863A?style=for-the-badge" alt="Licencia MIT">
 </p>
 
 ---
 
 ## 📖 Descripción
 
-**AS Facturation** es una aplicación de escritorio diseñada para pequeñas y medianas empresas. Centraliza la facturación, el control de stock, la base de clientes y la generación de reportes en una herramienta amigable y totalmente funcional sin necesidad de conexión a internet.
+**AS Facturation** es una aplicación de escritorio diseñada para centralizar la facturación, el control de stock, la base de clientes y la generación de reportes en una herramienta amigable y **100 % funcional sin conexión a internet**.
+
+Los datos se almacenan localmente en SQLite con respaldo automático en JSON, lo que garantiza la persistencia y la recuperación de información incluso ante bases de datos vacías o migraciones de esquema.
 
 ### 🧠 ¿Por qué elegir AS Facturation?
 
-- ✅ **Sin suscripciones** – Una sola instalación, datos locales.
-- ✅ **Interfaz moderna** – Construida con `CustomTkinter` (tema claro/oscuro).
-- ✅ **Persistencia segura** – SQLite + respaldo automático en JSON.
+- ✅ **Sin suscripciones** – Una sola instalación, datos locales y bajo tu control.
+- ✅ **Interfaz moderna** – Construida con `CustomTkinter`, con tema claro/oscuro.
+- ✅ **Persistencia segura** – SQLite con respaldo automático en JSON y recuperación ante bases dañadas.
 - ✅ **Roles integrados** – `admin` (control total) y `empleado` (solo ventas y consultas).
+- ✅ **Exportación real** – Reportes en Excel, facturas en PDF y notas de entrega imprimibles.
 - ✅ **Reportes visuales** – Gráficos de ventas, productos más vendidos y evolución mensual.
 
 ---
 
-## ✨ Características principales
+## ✨ Módulos y funcionalidades
 
 | Módulo | Funcionalidades |
 |--------|----------------|
-| 🛒 **Punto de venta** | Búsqueda rápida de productos, carrito, cálculo automático de impuestos y totales. |
-| 📦 **Inventario** | Alta, edición, eliminación, control de stock mínimo y alertas. |
-| 👥 **Clientes** | Registro con campos ampliados (teléfono, email, dirección, crédito disponible). |
-| 🧾 **Facturación** | Creación, edición, anulación y seguimiento de estado (pagada / crédito). |
-| 💰 **Pagos y créditos** | Registro de abonos, control de saldo pendiente y generación de recordatorios. |
-| 📊 **Reportes** | Ventas por período, productos más vendidos, clientes frecuentes, exportación a Excel. |
-| 🔐 **Seguridad** | Login con roles, hash de contraseñas (próximamente), respaldos automáticos. |
+| 🏪 **Punto de venta** | Búsqueda rápida de productos, carrito intuitivo, cálculo automático de impuestos y totales. |
+| 📦 **Inventario** | Alta, edición, eliminación, notas por producto, control de stock mínimo y alertas. |
+| 👥 **Clientes** | Registro ampliado (teléfono, email, dirección), notas y control de crédito disponible. |
+| 📄 **Facturas** | Creación, edición, anulación con nota de cancelación, seguimiento de estado (pagada/crédito) y **exportación a PDF**. |
+| 📦 **Notas de entrega** | Generación de comprobantes informales de entrega (sin validez fiscal) en PDF. |
+| 💰 **Pagos y créditos** | Registro de abonos, control de saldo pendiente y recordatorios. |
+| 📊 **Reportes** | Ventas por período, productos más vendidos, clientes frecuentes y **exportación a Excel**. |
+| 👥 **Usuarios** | Gestión de usuarios con contraseñas cifradas y roles (`admin` / `empleado`). |
+| 🔐 **Seguridad** | Login con roles, contraseñas con hash y permisos restringidos por rol. |
+
+---
+
+## 🗺️ Fase actual del desarrollo
+
+> Proyecto en **desarrollo activo** (v3.4). El núcleo funcional está completo y estable:
+
+- ✅ Punto de venta, inventario, clientes y facturación.
+- ✅ Exportación a **Excel**, **PDF** (facturas profesionales) y **Notas de Entrega**.
+- ✅ Sistema de usuarios, roles y contraseñas cifradas.
+- ✅ Respaldo automático en JSON y migraciones de esquema.
+- 🚧 En etapa de **refinamiento, optimización y pruebas** (calculos, UX y estabilidad).
 
 ---
 
 ## 🖥️ Capturas de pantalla
-
-> *Imagenes demostrativas:*
 
 <p align="center">
   <img src="img/screenshot_login.png" width="45%">
@@ -62,26 +85,32 @@
 
 ## 🏗️ Estructura del proyecto
 
-- `Main.py` — archivo principal que arranca la aplicación, muestra pantalla de splash y login.
-- `db.py` — módulo de base de datos, inicializa tablas SQLite y gestiona el estado.
-- `requirements.txt` — dependencias Python.
-- `billing_data.json` — respaldo de datos generado por la aplicación.
-- `Excel/` — carpeta de exportaciones o reportes Excel.
-- `img/` — recursos de imágenes y logos.
-- `test_create_user.py`, `test_login_ui.py` — pruebas de UI/usuario.
+| Archivo / carpeta | Descripción |
+|-------------------|-------------|
+| `Main.py` | Punto de entrada; arranca la app, splash y login. |
+| `db.py` | Base de datos: esquema SQLite, respaldos, usuarios y autenticación. |
+| `requirements.txt` | Dependencias del proyecto. |
+| `billing.db` | Base de datos local (SQLite). |
+| `billing_data.json` | Respaldo de datos generado automáticamente. |
+| `Facturas/` | Facturas exportadas en **PDF**. |
+| `NotasDeEntrega/` | Notas de entrega exportadas en **PDF**. |
+| `Excel/` | Reportes exportados en **Excel**. |
+| `img/` | Recursos, logos e imágenes de la interfaz. |
+| `test_create_user.py`, `test_login_ui.py` | Pruebas de creación de usuario y de la UI de login. |
 
 ---
 
 ## ⚙️ Requisitos
 
-- Python 3.10+ recomendado
-- Windows (probado en este entorno)
+- **Python 3.10+** (recomendado)
+- **Windows** (entorno verificado)
 
 Dependencias principales:
-- `customtkinter`
-- `matplotlib`
-- `Pillow`
-- `openpyxl` (opcional, para exportar a Excel)
+- `customtkinter` — interfaz gráfica moderna.
+- `matplotlib` — gráficos y reportes visuales.
+- `Pillow` — manejo de imágenes.
+- `openpyxl` — exportación de reportes a Excel.
+- `reportlab` — generación de facturas PDF y notas de entrega.
 
 ---
 
@@ -100,29 +129,21 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-4. Instala dependencias:
+4. Instala las dependencias:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-> Si `openpyxl` no está en `requirements.txt`, puedes instalarlo por separado:
->
-> ```bash
-> pip install openpyxl
-> ```
-
 ---
 
 ## ▶️ Ejecución
-
-Ejecuta la aplicación desde la terminal:
 
 ```bash
 python Main.py
 ```
 
-El proyecto abre una ventana de login/splash y luego carga el sistema de facturación.
+Se mostrará una pantalla de *splash* y de *login*; después se cargará el sistema de facturación completo.
 
 ---
 
@@ -130,45 +151,48 @@ El proyecto abre una ventana de login/splash y luego carga el sistema de factura
 
 La base de datos inicial crea un usuario administrador por defecto:
 
-- Usuario: `admin`
-- Contraseña: `admin`
+- **Usuario:** `admin`
+- **Contraseña:** `admin`
 
-> Se recomienda cambiar estas credenciales en el primer inicio.
+> ⚠️ Se recomienda cambiar estas credenciales en el primer inicio.
 
 ---
 
 ## 📝 Notas importantes
 
-- Los datos se almacenan en `billing.db` y se respaldan en `billing_data.json`.
-- Si la app detecta una base de datos vacía, intenta restaurar desde el JSON de respaldo.
-- La app incluye migraciones de esquema para mantener compatibilidad con versiones anteriores.
-- El diseño permite que el rol `empleado` tenga acceso restringido a edición/eliminación de recursos.
+- Los datos se almacenan en `billing.db` y se respaldan de forma automática en `billing_data.json`.
+- Si la aplicación detecta una base de datos vacía, intenta restaurarla desde el respaldo JSON.
+- El proyecto incluye migraciones de esquema para mantener compatibilidad entre versiones.
+- El rol `empleado` tiene acceso restringido a acciones de edición y eliminación.
 
 ---
 
-## 📌 Mejores prácticas
+## 🧰 Mejores prácticas
 
-- Haz respaldos periódicos de `billing.db` y `billing_data.json`.
-- Usa la carpeta `Excel/` para guardar reportes exportados.
-- Si usas iconos o logos personalizados, colócalos en `img/`.
+- Realiza respaldos periódicos de `billing.db` y `billing_data.json`.
+- Usa `Excel/`, `Facturas/` y `NotasDeEntrega/` para conservar las exportaciones organizadas.
+- Coloca logos o iconos personalizados dentro de `img/`.
 
 ---
 
-## 🌟 Extensiones posibles
+## 🚀 Extensiones posibles
 
-- Exportar facturas en PDF
-- Integrar impresión directa de tickets
-- Conexión a servicios de cotización de moneda en tiempo real
-- Añadir control de usuarios y permisos más granular
+- Impresión directa de tickets / facturas.
+- Cotización de moneda en tiempo real (tipo de cambio).
+- Control de usuarios y permisos más granular.
+- Vista previa gráfica de facturas antes de exportar.
 
 ---
 
 ## 📚 Referencias rápidas
 
 - Archivo principal: `Main.py`
-- Datos persistentes: `db.py`
+- Lógica de datos: `db.py`
 - Respaldo JSON: `billing_data.json`
 - Dependencias: `requirements.txt`
 
 ---
 
+## 📄 Licencia
+
+Distribuido bajo la **Licencia MIT**. Consulta el archivo de licencia del repositorio para más detalles.
