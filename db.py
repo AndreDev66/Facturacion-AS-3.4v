@@ -129,6 +129,13 @@ def init_db(db_path: str = "billing.db"):
             )
             """)
 
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS store_config (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+            """)
+
             # En caso de no existir Usuario incializar por defecto con admin
             try:
                 cur.execute("SELECT COUNT(*) FROM users")
@@ -188,7 +195,8 @@ def init_db(db_path: str = "billing.db"):
                     ('cancel_method', 'TEXT'),
                     ('cancel_note', 'TEXT'),
                     ('client_id', 'INTEGER'),
-                    ('client_name', 'TEXT')
+                    ('client_name', 'TEXT'),
+                    ('exchange_rate', 'REAL DEFAULT NULL')
                 ]:
                     if col_name not in inv_cols:
                         print(f"DEBUG: Añadiendo columna {col_name} a tabla invoices...")
@@ -225,6 +233,9 @@ def save_state(products: List[Dict[str, Any]], clients: List[Dict[str, Any]],
                iva_rate: float = 0.16, exchange_rate: float = 350.0,
                include_pending_in_dashboard: bool = True,
                auto_update_rate: bool = False, rate_source: str = "oficial",
+               store_name: str = "SISTEMA DE FACTURACIÓN AS",
+               store_rif: str = "", store_address: str = "",
+               store_phone: str = "",
                db_path: str = "billing.db") -> None:
     import time
     max_retries = 5
@@ -302,9 +313,9 @@ def save_state(products: List[Dict[str, Any]], clients: List[Dict[str, Any]],
                             break
                     
                     cur.execute(
-                        "INSERT OR REPLACE INTO invoices (number, date, client_id, client_name, subtotal, tax, total, payment_method, status, due_date, is_credit, balance, cancel_method, cancel_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT OR REPLACE INTO invoices (number, date, client_id, client_name, subtotal, tax, total, payment_method, status, due_date, is_credit, balance, cancel_method, cancel_note, exchange_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
-                            inv.get("number"), inv.get("date"), client_id, client_name, subtotal, tax, total, inv.get("payment_method", ""), inv.get("status", ""), inv.get("due_date"), int(bool(inv.get("is_credit", 0))), float(inv.get("balance", 0.0)), inv.get("cancel_method"), inv.get("cancel_note")
+                            inv.get("number"), inv.get("date"), client_id, client_name, subtotal, tax, total, inv.get("payment_method", ""), inv.get("status", ""), inv.get("due_date"), int(bool(inv.get("is_credit", 0))), float(inv.get("balance", 0.0)), inv.get("cancel_method"), inv.get("cancel_note"), inv.get("exchange_rate")
                         )
                     )
 
@@ -360,6 +371,10 @@ def save_state(products: List[Dict[str, Any]], clients: List[Dict[str, Any]],
                 cur.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("include_pending_in_dashboard", str(int(include_pending_in_dashboard))))
                 cur.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("auto_update_rate", str(int(auto_update_rate))))
                 cur.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("rate_source", str(rate_source)))
+                cur.execute("INSERT OR REPLACE INTO store_config (key, value) VALUES (?, ?)", ("rif", store_rif))
+                cur.execute("INSERT OR REPLACE INTO store_config (key, value) VALUES (?, ?)", ("fiscal_domicile", store_address))
+                cur.execute("INSERT OR REPLACE INTO store_config (key, value) VALUES (?, ?)", ("store_name", store_name))
+                cur.execute("INSERT OR REPLACE INTO store_config (key, value) VALUES (?, ?)", ("phone", store_phone))
 
                 conn.commit()
                 return 
@@ -375,7 +390,7 @@ def save_state(products: List[Dict[str, Any]], clients: List[Dict[str, Any]],
             raise
 
 
-def load_state(db_path: str = "billing.db") -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], int, float, float, bool, bool, str]:
+def load_state(db_path: str = "billing.db") -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], int, float, float, bool, bool, str, str, str, str, str]:
     try:
         init_db(db_path)
         with sqlite3.connect(db_path) as conn:
@@ -405,7 +420,7 @@ def load_state(db_path: str = "billing.db") -> Tuple[List[Dict[str, Any]], List[
                 for row in cur.fetchall()
             ]
 
-            cur.execute("SELECT number, date, client_name, subtotal, tax, total, payment_method, status, due_date, is_credit, balance, cancel_method, cancel_note, client_id FROM invoices ORDER BY number")
+            cur.execute("SELECT number, date, client_name, subtotal, tax, total, payment_method, status, due_date, is_credit, balance, cancel_method, cancel_note, client_id, exchange_rate FROM invoices ORDER BY number")
             invoice_rows = cur.fetchall()
             invoices = []
             for row in invoice_rows:
@@ -419,11 +434,16 @@ def load_state(db_path: str = "billing.db") -> Tuple[List[Dict[str, Any]], List[
                 cur.execute("SELECT type, date, amount, reason FROM documents WHERE invoice_number = ?", (number,))
                 documents = [{"type": d[0], "date": d[1], "amount": d[2], "reason": d[3]} for d in cur.fetchall()]
 
+                try:
+                    inv_exchange_rate = float(row[14]) if row[14] is not None else None
+                except (ValueError, TypeError):
+                    inv_exchange_rate = None
+
                 invoices.append({
                     "number": row[0], "date": row[1], "client": row[2], "subtotal": row[3],
                     "tax": row[4], "total": row[5], "payment_method": row[6], "status": row[7],
                     "due_date": row[8], "is_credit": bool(row[9]), "balance": float(row[10]) if row[10] is not None else 0.0,
-                    "cancel_method": row[11], "cancel_note": row[12], "items": items, "payments": payments, "documents": documents, "client_id": row[13]
+                    "cancel_method": row[11], "cancel_note": row[12], "items": items, "payments": payments, "documents": documents, "client_id": row[13], "exchange_rate": inv_exchange_rate
                 })
 
             cur.execute("SELECT value FROM meta WHERE key = ?", ("invoice_counter",))
@@ -450,10 +470,27 @@ def load_state(db_path: str = "billing.db") -> Tuple[List[Dict[str, Any]], List[
             r = cur.fetchone()
             rate_source = r[0] if r else "oficial"
 
-            return products, clients, invoices, invoice_counter, iva_rate, exchange_rate, include_pending_in_dashboard, auto_update_rate, rate_source
+            # Cargar configuración de tienda
+            cur.execute("SELECT value FROM store_config WHERE key = ?", ("store_name",))
+            r = cur.fetchone()
+            store_name = r[0] if r else "SISTEMA DE FACTURACIÓN AS"
+
+            cur.execute("SELECT value FROM store_config WHERE key = ?", ("rif",))
+            r = cur.fetchone()
+            company_rif = r[0] if r else "RIF: N/A"
+
+            cur.execute("SELECT value FROM store_config WHERE key = ?", ("fiscal_domicile",))
+            r = cur.fetchone()
+            company_address = r[0] if r else "Domicilio fiscal: N/A"
+
+            cur.execute("SELECT value FROM store_config WHERE key = ?", ("phone",))
+            r = cur.fetchone()
+            company_phone = r[0] if r else "Teléfono: N/A"
+
+            return products, clients, invoices, invoice_counter, iva_rate, exchange_rate, include_pending_in_dashboard, auto_update_rate, rate_source, store_name, company_rif, company_address, company_phone
     except Exception as e:
         print(f"Error loading state from database: {e}")
-        return [], [], [], 1000, 0.16, 350.0, True, False, "oficial"
+        return [], [], [], 1000, 0.16, 350.0, True, False, "oficial", "SISTEMA DE FACTURACIÓN AS", "", "", ""
 
 
 def create_user(username: str, password: str, role: str = "empleado", 

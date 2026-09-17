@@ -3,7 +3,7 @@
   <img src="img/logo.png" alt="AS Facturation Logo" width="150" style="border-radius: 20px;">
 </p>
 
-<h1 align="center">🧾 Sistema de facturación AS  — v3.1</h1>
+<h1 align="center">🧾 Sistema de facturación AS  — v3.3</h1>
 
 <p align="center">
   <strong>Sistema de facturación de escritorio moderno, rápido y seguro</strong><br>
