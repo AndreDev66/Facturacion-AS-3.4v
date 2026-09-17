@@ -137,59 +137,6 @@
   ],
   "invoices": [
     {
-      "number": 1053,
-      "date": "14/09/2026 14:30",
-      "client": "Andres Socorro",
-      "subtotal": 3659.78,
-      "tax": 585.5648,
-      "total": 4245.3448,
-      "payment_method": "Efectivo",
-      "status": "Cancelada",
-      "due_date": null,
-      "is_credit": false,
-      "balance": 0.0,
-      "cancel_method": "rembolso",
-      "cancel_note": "",
-      "items": [
-        {
-          "product": "Laptop HP 15",
-          "quantity": 1,
-          "price": 899.99,
-          "total": 899.99,
-          "tax_exempt": false,
-          "product_id": 1
-        },
-        {
-          "product": "Impresora Multifuncional",
-          "quantity": 12,
-          "price": 149.99,
-          "total": 1799.88,
-          "tax_exempt": false,
-          "product_id": 5
-        },
-        {
-          "product": "Teclado Mecánico",
-          "quantity": 7,
-          "price": 79.99,
-          "total": 559.93,
-          "tax_exempt": false,
-          "product_id": 3
-        },
-        {
-          "product": "Monitor 24\"",
-          "quantity": 2,
-          "price": 199.99,
-          "total": 399.98,
-          "tax_exempt": false,
-          "product_id": 4
-        }
-      ],
-      "payments": [],
-      "documents": [],
-      "client_id": 1,
-      "exchange_rate": null
-    },
-    {
       "number": 1054,
       "date": "15/09/2026 11:09",
       "client": "Sarai Villalobos",
@@ -292,5 +239,5 @@
     "fiscal_domicile": "Domicilio fiscal: N/A",
     "phone": "Teléfono: N/A"
   },
-  "version": "3.0"
+  "version": "3.3"
 }

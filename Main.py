@@ -3580,9 +3580,16 @@ class BillingSystem(ctk.CTkToplevel):
             totals_wrap.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
             story.extend([totals_wrap, Spacer(1, 14)])
 
+            obs_style = ParagraphStyle('NDObs', parent=table_cell_style, fontSize=8.6, leading=10.5)
+            observations = [
+                Paragraph('- Precios sujetos a cambios sin previo aviso.', obs_style),
+                Paragraph('- Condición de pago: pago en dólares o la tasa de cambio del día.', obs_style),
+            ]
+            obs_cell = Table([[observations]], colWidths=[7.0 * inch])
+            obs_cell.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6), ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5)]))
             story.append(Paragraph('OBSERVACIONES', section_style))
             story.append(Spacer(1, 3))
-            story.append(Table([['']], colWidths=[7.0 * inch], rowHeights=[0.5 * inch], style=TableStyle([('BOX', (0, 0), (-1, -1), 0.6, colors.HexColor('#CBD5E1')), ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#FFFFFF'))])))
+            story.append(Table([[obs_cell]], colWidths=[7.0 * inch], style=TableStyle([('BOX', (0, 0), (-1, -1), 0.6, colors.HexColor('#CBD5E1')), ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#FFFFFF'))])))
             story.append(Spacer(1, 22))
 
             signature_table = Table([
