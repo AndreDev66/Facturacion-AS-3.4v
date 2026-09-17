@@ -275,37 +275,46 @@
       "number": 1058,
       "date": "17/09/2026 12:00",
       "client": "Andres Socorro",
-      "items": [
-        {
-          "product": "Adaptador HDMI / VGA",
-          "quantity": 2,
-          "price": 15.0,
-          "total": 30.0
-        },
-        {
-          "product": "Impresora Multifuncional",
-          "quantity": 33,
-          "price": 149.99,
-          "total": 4949.67
-        },
-        {
-          "product": "Teclado Mecánico",
-          "quantity": 1,
-          "price": 79.99,
-          "total": 79.99
-        }
-      ],
       "subtotal": 5059.66,
       "tax": 809.5456,
       "total": 5869.2056,
       "payment_method": "Pago móvil",
       "status": "Pagada",
       "due_date": null,
-      "is_credit": 0,
+      "is_credit": false,
       "balance": 0.0,
-      "exchange_rate": 847.4442,
+      "cancel_method": null,
+      "cancel_note": null,
+      "items": [
+        {
+          "product": "Adaptador HDMI / VGA",
+          "quantity": 2,
+          "price": 15.0,
+          "total": 30.0,
+          "tax_exempt": false,
+          "product_id": 6
+        },
+        {
+          "product": "Impresora Multifuncional",
+          "quantity": 33,
+          "price": 149.99,
+          "total": 4949.67,
+          "tax_exempt": false,
+          "product_id": 5
+        },
+        {
+          "product": "Teclado Mecánico",
+          "quantity": 1,
+          "price": 79.99,
+          "total": 79.99,
+          "tax_exempt": false,
+          "product_id": 3
+        }
+      ],
       "payments": [],
-      "documents": []
+      "documents": [],
+      "client_id": 1,
+      "exchange_rate": 847.4442
     }
   ],
   "invoice_counter": 1059,
@@ -320,5 +329,5 @@
     "fiscal_domicile": "Domicilio fiscal: N/A",
     "phone": "Teléfono: N/A"
   },
-  "version": "3.3"
+  "version": "3.4"
 }
