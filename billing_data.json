@@ -7,7 +7,7 @@
       "category": "Electrónica",
       "purchase_price": 0.0,
       "price": 899.99,
-      "stock": 98,
+      "stock": 99,
       "min_stock": 3,
       "location": "A1",
       "supplier": "HP",
@@ -63,7 +63,7 @@
       "category": "Electrónica",
       "purchase_price": 0.0,
       "price": 149.99,
-      "stock": 49,
+      "stock": 16,
       "min_stock": 2,
       "location": "B2",
       "supplier": "",
@@ -189,12 +189,12 @@
       "tax": 161.5968,
       "total": 1171.5768,
       "payment_method": "Transferencia",
-      "status": "Pagada",
+      "status": "Cancelada",
       "due_date": null,
       "is_credit": false,
       "balance": 0.0,
-      "cancel_method": null,
-      "cancel_note": null,
+      "cancel_method": "rembolso",
+      "cancel_note": "",
       "items": [
         {
           "product": "Laptop HP 15",
@@ -225,9 +225,90 @@
       "documents": [],
       "client_id": 1,
       "exchange_rate": 847.4442
+    },
+    {
+      "number": 1057,
+      "date": "17/09/2026 11:49",
+      "client": "Andres Socorro",
+      "subtotal": 3429.7400000000002,
+      "tax": 548.7584,
+      "total": 3978.4984000000004,
+      "payment_method": "Pago móvil",
+      "status": "Cancelada",
+      "due_date": null,
+      "is_credit": false,
+      "balance": 0.0,
+      "cancel_method": "rembolso",
+      "cancel_note": "",
+      "items": [
+        {
+          "product": "Monitor 24\"",
+          "quantity": 5,
+          "price": 199.99,
+          "total": 999.95,
+          "tax_exempt": false,
+          "product_id": 4
+        },
+        {
+          "product": "Mouse Inalámbrico",
+          "quantity": 6,
+          "price": 29.99,
+          "total": 179.94,
+          "tax_exempt": false,
+          "product_id": 2
+        },
+        {
+          "product": "Impresora Multifuncional",
+          "quantity": 15,
+          "price": 149.99,
+          "total": 2249.8500000000004,
+          "tax_exempt": false,
+          "product_id": 5
+        }
+      ],
+      "payments": [],
+      "documents": [],
+      "client_id": 1,
+      "exchange_rate": 847.4442
+    },
+    {
+      "number": 1058,
+      "date": "17/09/2026 12:00",
+      "client": "Andres Socorro",
+      "items": [
+        {
+          "product": "Adaptador HDMI / VGA",
+          "quantity": 2,
+          "price": 15.0,
+          "total": 30.0
+        },
+        {
+          "product": "Impresora Multifuncional",
+          "quantity": 33,
+          "price": 149.99,
+          "total": 4949.67
+        },
+        {
+          "product": "Teclado Mecánico",
+          "quantity": 1,
+          "price": 79.99,
+          "total": 79.99
+        }
+      ],
+      "subtotal": 5059.66,
+      "tax": 809.5456,
+      "total": 5869.2056,
+      "payment_method": "Pago móvil",
+      "status": "Pagada",
+      "due_date": null,
+      "is_credit": 0,
+      "balance": 0.0,
+      "exchange_rate": 847.4442,
+      "payments": [],
+      "documents": []
     }
   ],
-  "invoice_counter": 1057,
+  "invoice_counter": 1059,
   "iva_rate": 0.16,
   "exchange_rate": 847.4442,
   "include_pending_in_dashboard": false,

@@ -341,7 +341,7 @@ class BillingSystem(ctk.CTkToplevel):
     def __init__(self, master=None, user_role="admin"):
         super().__init__(master=master)
         self.user_role = user_role
-        self.title(f"Sistema de Facturación AS — v3.3 ({'Administrador' if user_role == 'admin' else 'Empleado'})")
+        self.title(f"Sistema de Facturación AS — 3.4v ({'Administrador' if user_role == 'admin' else 'Empleado'})")
         self.geometry("1100x700")
         self.minsize(900, 600)
         
@@ -3557,11 +3557,13 @@ class BillingSystem(ctk.CTkToplevel):
             story.extend([client_table, Spacer(1, 10)])
 
             item_rows = [[Paragraph('CANT.', table_header_style), Paragraph('CÓDIGO', table_header_style), Paragraph('DESCRIPCIÓN', table_header_style), Paragraph('P. UNIT.<br/>USD', table_header_style), Paragraph('IMPORTE<br/>USD', table_header_style)]]
+            delivery_total = 0.0
             for item in invoice_data.get('items', []):
                 product = next((p for p in self.products if p.get('name') == item.get('product')), {})
                 quantity = float(item.get('quantity', 0) or 0)
                 unit_usd = float(item.get('price', 0) or 0)
-                total_usd = float(item.get('total', unit_usd * quantity) or 0)
+                total_usd = unit_usd * quantity
+                delivery_total += total_usd
                 item_rows.append([cell(item.get('quantity', 0), table_number_style), cell(item.get('code') or product.get('code')), Paragraph(clean(item.get('product')), table_cell_style), cell(money_usd(unit_usd), table_number_style), cell(money_usd(total_usd), table_number_style)])
 
             items_table = Table(item_rows, colWidths=[0.6 * inch, 0.9 * inch, 2.45 * inch, 1.4 * inch, 1.65 * inch], repeatRows=1)
@@ -3572,8 +3574,7 @@ class BillingSystem(ctk.CTkToplevel):
             items_table.setStyle(item_style)
             story.extend([items_table, Spacer(1, 9)])
 
-            subtotal = float(invoice_data.get('subtotal', 0.0) or 0.0)
-            total = float(invoice_data.get('total', 0.0) or 0.0)
+            total = delivery_total
             totals_table = Table([[Paragraph('MONTO TOTAL (USD)', total_style), Paragraph(money_usd(total), total_style)]], colWidths=[2.0 * inch, 1.5 * inch])
             totals_table.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8FAFC')), ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')), ('ALIGN', (1, 0), (1, -1), 'RIGHT'), ('LINEABOVE', (0, -1), (-1, -1), 1, colors.HexColor('#0F172A')), ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6), ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6)]))
             totals_wrap = Table([[totals_table, '']], colWidths=[3.5 * inch, 3.5 * inch])
@@ -5540,7 +5541,7 @@ class BillingSystem(ctk.CTkToplevel):
                     "fiscal_domicile": getattr(self, 'company_address', 'Domicilio fiscal: N/A'),
                     "phone": getattr(self, 'company_phone', 'Teléfono: N/A')
                 },
-                "version": "3.3"
+                "version": "3.4"
             }
             with open("billing_data.json", "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
@@ -5740,7 +5741,7 @@ class SplashScreen(tk.Toplevel):
         )
         # Subtítulo
         self.sub_id = self.canvas.create_text(
-            w // 2, logo_y + 40, text="3.3v",
+            w // 2, logo_y + 40, text="3.4v",
             font=("Segoe UI", 14), fill="#FFFFFF"
         )
         
