@@ -24,7 +24,7 @@
       "stock": 48,
       "min_stock": 10,
       "location": "A2",
-      "supplier": null,
+      "supplier": "DR HOME",
       "notes": "",
       "tax_exempt": false
     },
@@ -35,7 +35,7 @@
       "category": "Electrónica",
       "purchase_price": 0.0,
       "price": 79.99,
-      "stock": 99,
+      "stock": 98,
       "min_stock": 5,
       "location": "A3",
       "supplier": "",
@@ -77,7 +77,7 @@
       "category": "Electrónica",
       "purchase_price": 12.0,
       "price": 15.0,
-      "stock": 0,
+      "stock": 6,
       "min_stock": 4,
       "location": "A7",
       "supplier": "DR HOME",
@@ -315,19 +315,49 @@
       "documents": [],
       "client_id": 1,
       "exchange_rate": 847.4442
+    },
+    {
+      "number": 1060,
+      "date": "18/09/2026 14:42",
+      "client": "Andres Socorro",
+      "subtotal": 79.99,
+      "tax": 12.798399999999999,
+      "total": 92.7884,
+      "payment_method": "Efectivo",
+      "status": "Pagada",
+      "due_date": null,
+      "is_credit": false,
+      "balance": 0.0,
+      "cancel_method": null,
+      "cancel_note": null,
+      "items": [
+        {
+          "product": "Teclado Mecánico",
+          "quantity": 1,
+          "price": 79.99,
+          "total": 79.99,
+          "tax_exempt": false,
+          "product_id": 3
+        }
+      ],
+      "payments": [],
+      "documents": [],
+      "client_id": 1,
+      "exchange_rate": 848.5458
     }
   ],
-  "invoice_counter": 1059,
+  "invoice_counter": 1061,
   "iva_rate": 0.16,
-  "exchange_rate": 847.4442,
+  "exchange_rate": 848.5458,
   "include_pending_in_dashboard": false,
   "auto_update_rate": true,
   "rate_source": "oficial",
   "store_config": {
     "store_name": "SISTEMA DE FACTURACIÓN AS",
-    "rif": "RIF: N/A",
-    "fiscal_domicile": "Domicilio fiscal: N/A",
-    "phone": "Teléfono: N/A"
+    "rif": "V-302689586",
+    "fiscal_domicile": "Urb Villatamares munipio mara, Zulia",
+    "phone": "+58 4125142837",
+    "store_url": "https://andrewdev2004.neocities.org/"
   },
   "version": "3.4"
 }

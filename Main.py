@@ -1,14 +1,33 @@
-import re
 import tkinter as tk
 from tkinter import messagebox, ttk
 import tkinter.simpledialog as simpledialog
 import customtkinter as ctk
 from PIL import Image, ImageTk
 from datetime import datetime, timedelta
+from typing import Any, Dict, Optional, Tuple
 import json
 import os
+import shutil
+import tempfile
 import db
+import config
+import ui_kit
 import signal
+from ui_components import (
+    UI,
+    ModernDialog,
+    ModernMessageBox,
+    PDFPreviewDialog,
+    Toast,
+    open_path,
+    safe_destroy,
+    safe_widget_insert,
+    toggle_password_visibility,
+    format_ci_rif,
+    fade_in_window,
+    shake_window,
+    load_ctk_image,
+)
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -18,8 +37,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.barcode import qr as rl_qr
 from xml.sax.saxutils import escape
 
 
@@ -29,324 +50,103 @@ except ImportError:
     Workbook = None
 
 
-def safe_destroy(widget):
-    """Destruye de forma segura un widget Tkinter/CTk si existe, ignorando TclError."""
-    try:
-        if widget is None:
-            return
-        exists = False
-        try:
-            exists = bool(widget.winfo_exists())
-        except Exception:
-            # algunos objetos pueden no exponer winfo_exists
-            exists = True
-        if exists:
-            try:
-                widget.destroy()
-            except tk.TclError:
-                pass
-            except Exception:
-                try:
-                    widget.destroy()
-                except Exception:
-                    pass
-    except Exception:
-        pass
+def qr_flowable(payload: str, size: float):
+    """Devuelve un flowable de ReportLab con un código QR del tamaño indicado.
 
-
-def safe_widget_insert(widget, index, text):
-    """Insertar texto de forma segura en widgets Entry/Text/CtkEntry.
-    Convierte None a cadena vacía y captura errores de Tcl.
+    Usa ``Drawing`` (que sí es un flowable) porque ``platypus.Image`` no acepta
+    widgets de código de barras directamente.
     """
-    try:
-        s = "" if text is None else str(text)
-        try:
-            widget.insert(index, s)
-        except Exception:
-            # Algunos widgets esperan índices diferentes; intentar sin índice
-            try:
-                widget.insert(s)
-            except Exception:
-                try:
-                    # como último recurso, escribir mediante configure/state si aplica
-                    widget.configure(state="normal")
-                    widget.delete(0, "end")
-                    widget.insert(0, s)
-                except Exception:
-                    pass
-    except Exception:
-        pass
+    widget = rl_qr.QrCodeWidget(payload)
+    widget.barLevel = "M"
+    bounds = widget.getBounds()
+    width = bounds[2] - bounds[0]
+    height = bounds[3] - bounds[1]
+    drawing = Drawing(size, size, transform=[size / width, 0, 0, size / height, 0, 0])
+    drawing.add(widget)
+    return drawing
 
-def toggle_password_visibility(entry, button):
-    """Alternar visibilidad de la contraseña en un CTkEntry"""
-    if entry.cget("show") == "*":
-        entry.configure(show="")
-        button.configure(text="👁️") # Ojo abierto: Ver
-    else:
-        entry.configure(show="*")
-        button.configure(text="🔒") # Candado/Ojo tachado: Ocultar
 
-def format_ci_rif(value):
-    """Normaliza cédula/RIF agrupando los dígitos de 3 en 3:
-    '30.2689.58' -> '30.268.958', '11609827' -> '11.609.827',
-    'J-123456789' -> 'J-123.456.789'."""
-    if value is None:
-        return ""
-    s = str(value).strip()
-    if not s:
-        return ""
-    prefix_match = re.match(r"^\s*([A-Za-z]{1,3})", s)
-    digits = re.sub(r"\D", "", s)
-    if not digits:
-        return s
-    groups = [digits[max(0, i - 3):i] for i in range(len(digits), 0, -3)]
-    grouped = ".".join(reversed(groups))
-    if prefix_match:
-        return f"{prefix_match.group(1)}-{grouped}"
-    return grouped
+# Las utilidades de UI (open_path, safe_destroy, safe_widget_insert,
+# toggle_password_visibility y format_ci_rif) se movieron a ui_components.py
 
 # Configuración Inicial de CustomTkinter
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("dark-blue")
 
-# =============================================================================
-# TOKENS DE DISEÑO — Paleta, tipografía y radios coherentes
-# =============================================================================
-class UI:
-    """Tokens de diseño centralizados para mantener coherencia visual."""
-
-    # Superficies
-    BG = "#F8FAFC"
-    CARD = "#FFFFFF"
-    FIELD = "#FFFFFF"
-    MUTED = "#E2E8F0"
-    BORDER = "#CBD5E1"
-
-    # Texto
-    TEXT = "#1E293B"
-    TEXT_SECONDARY = "#475569"
-    TEXT_MUTED = "#64748B"
-
-    # Acciones
-    PRIMARY = "#2563EB"
-    PRIMARY_HOVER = "#1D4ED8"
-    ACCENT = "#3B82F6"
-    SUCCESS = "#059669"
-    SUCCESS_HOVER = "#047857"
-    WARNING = "#F59E0B"
-    WARNING_HOVER = "#D97706"
-    DANGER = "#DC2626"
-    DANGER_HOVER = "#B91C1C"
-    INFO = "#0EA5E9"
-    INFO_HOVER = "#0284C7"
-    INDIGO = "#6366F1"
-    INDIGO_HOVER = "#4F46E5"
-    NEUTRAL = "#64748B"
-    NEUTRAL_HOVER = "#475569"
-
-    # Tipografía
-    FONT = "Segoe UI"
-    FONT_HEADING = "Segoe UI"
-    FONT_MONO = "Cascadia Code"
-
-    S_H1 = (FONT_HEADING, 24, "bold")
-    S_H2 = (FONT_HEADING, 20, "bold")
-    S_H3 = (FONT_HEADING, 14, "bold")
-    S_BODY = (FONT, 12)
-    S_SMALL = (FONT, 10)
-
-    # Radios / Espaciado
-    R_SM = 8
-    R_MD = 12
-    R_LG = 16
-    SPACE = 10
-
-
-def fade_in_window(window, step=0.07):
-    """Fade-in sutil no bloqueante para ventanas Toplevel."""
-    try:
-        window.attributes("-alpha", 0.0)
-    except Exception:
-        return
-    try:
-        window.focus_force()
-    except Exception:
-        pass
-
-    def _tick(alpha=0.0):
-        try:
-            if not window.winfo_exists():
-                return
-            alpha = min(alpha + step, 1.0)
-            window.attributes("-alpha", alpha)
-            if alpha < 1.0:
-                window.after(14, lambda: _tick(alpha))
-        except Exception:
-            pass
-
-    window.after(10, lambda: _tick(0.0))
-
-
-def shake_window(window, count=0):
-    """Animación de shake sutil (feedback en errores de validación)."""
-    if count >= 6:
-        return
-    try:
-        x = window.winfo_x()
-        offset = 8 if count % 2 == 0 else -8
-        window.geometry(f"+{x + offset}+{window.winfo_y()}")
-        window.after(50, lambda: shake_window(window, count + 1))
-    except Exception:
-        pass
-
-
-class ModernDialog(ctk.CTkToplevel):
-    """Diálogo modal con estética coherente; reemplaza al messagebox nativo."""
-
-    def __init__(self, parent, title, message, icon="ℹ️", buttons=("OK",), width=420):
-        super().__init__(parent)
-        self.result = None
-        self.title(title)
-        self.width = width
-        self.resizable(False, False)
-        try:
-            self.configure(fg_color=UI.CARD)
-        except Exception:
-            pass
-        self._build(title, message, icon, buttons)
-        if parent is not None:
-            self.transient(parent)
-        try:
-            self.grab_set()
-        except Exception:
-            pass
-        self._center(parent)
-        self.protocol("WM_DELETE_WINDOW", lambda: self._finish(None))
-        fade_in_window(self)
-        self.bind("<Escape>", lambda e: self._finish(None))
-        self.bind("<Return>", lambda e: self._finish(buttons[0] if buttons else None))
-
-    def _build(self, title, message, icon, buttons):
-        icon_color = UI.TEXT_MUTED
-        if icon == "❌":
-            icon_color = UI.DANGER
-        elif icon == "⚠️":
-            icon_color = UI.WARNING
-        elif icon == "ℹ️":
-            icon_color = UI.PRIMARY
-        elif icon == "ⓘ":
-            icon_color = UI.PRIMARY
-        elif icon == "❓":
-            icon_color = UI.INDIGO
-        elif icon == "✅":
-            icon_color = UI.SUCCESS
-
-        ctk.CTkLabel(
-            self, text=icon, font=(UI.FONT, 28), text_color=icon_color,
-            anchor="center", justify="center"
-        ).pack(fill="x", pady=(20, 4))
-        ctk.CTkLabel(
-            self, text=title, font=UI.S_H3, text_color=UI.TEXT,
-            anchor="center", justify="center"
-        ).pack(fill="x", padx=24)
-        ctk.CTkLabel(
-            self, text=message, wraplength=self.width - 60,
-            font=UI.S_BODY, text_color=UI.TEXT_SECONDARY,
-            justify="center", anchor="center"
-        ).pack(padx=28, pady=(8, 4))
-
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(pady=(14, 18))
-
-        default_style = {"corner_radius": UI.R_SM, "height": 36, "font": (UI.FONT, 12, "bold")}
-        for b in buttons:
-            if b.lower() in ("ok", "sí", "aceptar", "guardar"):
-                fg, hover = UI.PRIMARY, UI.PRIMARY_HOVER
-            elif b.lower() in ("no", "cancelar"):
-                fg, hover = UI.NEUTRAL, UI.NEUTRAL_HOVER
-            else:
-                fg, hover = UI.NEUTRAL, UI.NEUTRAL_HOVER
-            ctk.CTkButton(
-                btn_frame, text=b, width=110,
-                fg_color=fg, hover_color=hover, **default_style,
-                command=lambda rb=b: self._finish(rb)
-            ).pack(side="left", padx=6)
-
-    def _center(self, parent):
-        try:
-            self.update_idletasks()
-            w = self.width
-            h = self.winfo_reqheight()
-            if parent is not None and parent.winfo_exists():
-                x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
-                y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
-            else:
-                x = (self.winfo_screenwidth() - w) // 2
-                y = (self.winfo_screenheight() - h) // 2
-            self.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
-        except Exception:
-            pass
-
-    def _finish(self, result):
-        self.result = result
-        try:
-            self.grab_release()
-        except Exception:
-            pass
-        safe_destroy(self)
-
-
-class ModernMessageBox:
-    """Reemplazo de messagebox con estética CTk (mismas firmas)."""
-
-    @classmethod
-    def _show(cls, kind, title, message, **kwargs):
-        icons = {"info": "ⓘ", "warning": "⚠️", "error": "❌", "question": "❓", "success": "✅"}
-        parent = kwargs.pop("parent", None)
-        kwargs.pop("icon", None)
-        dlg = ModernDialog(
-            parent, title, message,
-            icon=icons.get(kind, "ℹ️"),
-            buttons=("Sí", "No") if kind == "question" else ("OK",)
-        )
-        try:
-            if parent is not None and parent.winfo_exists():
-                parent.wait_window(dlg)
-            else:
-                dlg.wait_window()
-        except Exception:
-            pass
-        if kind == "question":
-            return dlg.result == "Sí"
-        return dlg.result
-
-    @classmethod
-    def showinfo(cls, title, message, **kwargs):
-        return cls._show("info", title, message, **kwargs)
-
-    @classmethod
-    def showwarning(cls, title, message, **kwargs):
-        return cls._show("warning", title, message, **kwargs)
-
-    @classmethod
-    def showerror(cls, title, message, **kwargs):
-        return cls._show("error", title, message, **kwargs)
-
-    @classmethod
-    def askyesno(cls, title, message, **kwargs):
-        return cls._show("question", title, message, **kwargs)
-
-
 class BillingSystem(ctk.CTkToplevel):
-    def __init__(self, master=None, user_role="admin"):
+    # --- Propiedades con validación -----------------------------------------
+    @property
+    def invoice_counter(self) -> int:
+        """Número de la próxima factura; nunca por debajo del mínimo."""
+        return getattr(self, "_invoice_counter", config.AppConfig.INVOICE_COUNTER_START)
+
+    @invoice_counter.setter
+    def invoice_counter(self, value: Any) -> None:
+        try:
+            counter = int(value)
+        except (TypeError, ValueError):
+            counter = config.AppConfig.INVOICE_COUNTER_START
+        self._invoice_counter = max(config.AppConfig.MIN_INVOICE_COUNTER, counter)
+
+    @property
+    def iva_rate(self) -> float:
+        """Tasa de IVA como fracción (0.16 == 16 %)."""
+        return getattr(self, "_iva_rate", config.AppConfig.IVA_RATE)
+
+    @iva_rate.setter
+    def iva_rate(self, value: Any) -> None:
+        try:
+            rate = float(value)
+        except (TypeError, ValueError):
+            rate = config.AppConfig.IVA_RATE
+        self._iva_rate = min(max(rate, config.AppConfig.MIN_IVA_RATE),
+                             config.AppConfig.MAX_IVA_RATE)
+
+    @property
+    def exchange_rate(self) -> float:
+        """Tasa de cambio USD -> VES; siempre positiva."""
+        return getattr(self, "_exchange_rate", config.AppConfig.EXCHANGE_RATE)
+
+    @exchange_rate.setter
+    def exchange_rate(self, value: Any) -> None:
+        try:
+            rate = float(value)
+        except (TypeError, ValueError):
+            rate = config.AppConfig.EXCHANGE_RATE
+        self._exchange_rate = max(config.AppConfig.MIN_EXCHANGE_RATE, rate)
+
+    def __init__(self, master=None, user_role="admin") -> None:
         super().__init__(master=master)
         self.user_role = user_role
-        self.title(f"Sistema de Facturación AS — 3.4v ({'Administrador' if user_role == 'admin' else 'Empleado'})")
+        self.title(f"Sistema de Facturación AS — 3.5v ({'Administrador' if user_role == 'admin' else 'Empleado'})")
         self.geometry("1100x700")
         self.minsize(900, 600)
-        
-        # Iniciar maximizado
-        self.after(0, lambda: self.state('zoomed'))
+
+        # Restaurar geometría y estado guardados (si existen)
+        saved_geom, saved_state = ui_kit.load_window_state()
+        if saved_geom:
+            try:
+                self.geometry(saved_geom)
+            except Exception:
+                pass
+            if saved_state == "zoomed":
+                try:
+                    self.after(0, lambda: self.state('zoomed'))
+                except tk.TclError:
+                    pass
+        else:
+            # Iniciar maximizado (compatible con gestores de ventanas de Linux)
+            try:
+                self.after(0, lambda: self.state('zoomed'))
+            except tk.TclError:
+                pass
+
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        try:
+            self.geometry(f"{int(screen_w * 0.92)}x{int(screen_h * 0.88)}")
+        except Exception:
+            pass
 
         # Variables de estado
         self.include_pending_in_dashboard = True
@@ -356,15 +156,16 @@ class BillingSystem(ctk.CTkToplevel):
         self.clients = []
         self.invoices = []
         self.current_invoice_items = []
-        self.invoice_counter = 1000
-        self.iva_rate = 0.16  # IVA configurable
-        self.exchange_rate = 350.0  # Tasa de cambio USD a BS configurable
-        self.auto_update_rate = False
-        self.rate_source = "oficial"
-        self.company_name = "SISTEMA DE FACTURACIÓN AS"
-        self.company_rif = "RIF: N/A"
-        self.company_address = "Domicilio fiscal: N/A"
-        self.company_phone = "Teléfono: N/A"
+        self.invoice_counter = config.AppConfig.INVOICE_COUNTER_START
+        self.iva_rate = config.AppConfig.IVA_RATE  # IVA configurable
+        self.exchange_rate = config.AppConfig.EXCHANGE_RATE  # Tasa de cambio USD a BS configurable
+        self.auto_update_rate = config.AppConfig.AUTO_UPDATE_RATE
+        self.rate_source = config.AppConfig.RATE_SOURCE
+        self.company_name = config.AppConfig.COMPANY_NAME
+        self.company_rif = config.AppConfig.COMPANY_RIF
+        self.company_address = config.AppConfig.COMPANY_ADDRESS
+        self.company_phone = config.AppConfig.COMPANY_PHONE
+        self.store_url = getattr(config.AppConfig, 'STORE_URL', '')
         
         # Inicializar base de datos
         db.init_db()
@@ -430,6 +231,9 @@ class BillingSystem(ctk.CTkToplevel):
         # Actualizar contadores
         self.update_counters()
 
+        # Alerta visual de stock bajo (no bloqueante, tras montar la ventana)
+        self.after(1200, self.notify_low_stock)
+
         # Aplicar permisos según el rol
         self.apply_permissions()
 
@@ -443,7 +247,7 @@ class BillingSystem(ctk.CTkToplevel):
         self.attributes("-alpha", 0.0)
         self._fade_in()
 
-    def apply_permissions(self):
+    def apply_permissions(self) -> None:
         """Aplicar restricciones basadas en el rol del usuario"""
         if self.user_role == "empleado":
             def disable_restricted_buttons(parent):
@@ -479,7 +283,7 @@ class BillingSystem(ctk.CTkToplevel):
         else:
             print("INFO: Sesión iniciada como ADMINISTRADOR")
 
-    def _require_admin(self, action):
+    def _require_admin(self, action: str) -> bool:
         """Evitar que un empleado ejecute una operación restringida por otro medio."""
         if self.user_role == "admin":
             return True
@@ -489,7 +293,7 @@ class BillingSystem(ctk.CTkToplevel):
         )
         return False
 
-    def _fade_in(self, alpha=0.0):
+    def _fade_in(self, alpha=0.0) -> None:
         """Animación de fade-in sutil"""
         if alpha < 1.0:
             alpha = min(alpha + 0.06, 1.0)
@@ -498,8 +302,11 @@ class BillingSystem(ctk.CTkToplevel):
             except Exception:
                 return
             self.after(16, lambda: self._fade_in(alpha))
+        else:
+            # Mostrar pista de atajos la primera vez que se inicia sesión
+            self.after(300, lambda: ui_kit.show_shortcut_hints_if_needed(self))
 
-    def _on_tab_changed(self, event=None):
+    def _on_tab_changed(self, event=None) -> None:
         """Microinteracción: pulso sutil de opacidad al navegar entre pestañas."""
         is_child, _ = self._is_child_dialog_focused()
         if is_child:
@@ -521,7 +328,28 @@ class BillingSystem(ctk.CTkToplevel):
         except Exception:
             pass
 
-    def setup_keyboard_shortcuts(self):
+        # Auto-focus del buscador según la pestaña activa
+        try:
+            idx = self.tab_control.index("current")
+            entry = None
+            if idx == 0 and hasattr(self, 'pos_search_entry'):
+                entry = self.pos_search_entry
+            elif idx == 1 and hasattr(self, 'inventory_search_entry'):
+                entry = self.inventory_search_entry
+            elif idx == 2 and hasattr(self, 'client_search_entry'):
+                entry = self.client_search_entry
+            if entry is not None and entry.winfo_exists():
+                entry.focus()
+                try:
+                    entry.focus_force()
+                except Exception:
+                    pass
+            if idx == 1:
+                self.notify_low_stock()
+        except Exception:
+            pass
+
+    def setup_keyboard_shortcuts(self) -> None:
         """Configurar atajos de teclado globales del sistema"""
         # Navegación entre pestañas (Ctrl + Tab, Ctrl + Shift + Tab, Ctrl + RePág / AvPág)
         self.bind_all("<Control-Tab>", self.switch_tab_next)
@@ -543,7 +371,7 @@ class BillingSystem(ctk.CTkToplevel):
         self.bind_all("<Control-P>", self.print_or_pay_shortcut)
         self.bind_all("<Escape>", self.on_escape_shortcut)
 
-    def _is_child_dialog_focused(self):
+    def _is_child_dialog_focused(self) -> Tuple[bool, Optional[Any]]:
         """Verifica si el foco actual está en una ventana modal o diálogo secundario"""
         try:
             focused = self.focus_get()
@@ -555,7 +383,7 @@ class BillingSystem(ctk.CTkToplevel):
             pass
         return False, None
 
-    def switch_tab_next(self, event=None):
+    def switch_tab_next(self, event=None) -> None:
         """Cambiar a la siguiente pestaña con Ctrl+Tab"""
         is_child, _ = self._is_child_dialog_focused()
         if is_child:
@@ -571,7 +399,7 @@ class BillingSystem(ctk.CTkToplevel):
             print(f"DEBUG: Error cambiando a pestaña siguiente: {e}")
         return "break"
 
-    def switch_tab_prev(self, event=None):
+    def switch_tab_prev(self, event=None) -> None:
         """Cambiar a la pestaña anterior con Ctrl+Shift+Tab"""
         is_child, _ = self._is_child_dialog_focused()
         if is_child:
@@ -587,7 +415,7 @@ class BillingSystem(ctk.CTkToplevel):
             print(f"DEBUG: Error cambiando a pestaña previa: {e}")
         return "break"
 
-    def switch_tab_index(self, index, event=None):
+    def switch_tab_index(self, index, event=None) -> None:
         """Saltar directamente a una pestaña por su índice numérico (Ctrl+1, Ctrl+2, etc.)"""
         is_child, _ = self._is_child_dialog_focused()
         if is_child:
@@ -600,7 +428,7 @@ class BillingSystem(ctk.CTkToplevel):
             print(f"DEBUG: Error saltando a pestaña {index}: {e}")
         return "break"
 
-    def focus_search_shortcut(self, event=None):
+    def focus_search_shortcut(self, event=None) -> None:
         """Atajo Ctrl+F: Enfocar el buscador de la pestaña activa o buscador global"""
         is_child, _ = self._is_child_dialog_focused()
         if is_child:
@@ -626,7 +454,7 @@ class BillingSystem(ctk.CTkToplevel):
             print(f"DEBUG: Error en Ctrl+F: {e}")
         return "break"
 
-    def new_record_shortcut(self, event=None):
+    def new_record_shortcut(self, event=None) -> None:
         """Atajo Ctrl+N: Crear nuevo registro según la pestaña activa"""
         is_child, _ = self._is_child_dialog_focused()
         if is_child:
@@ -645,7 +473,7 @@ class BillingSystem(ctk.CTkToplevel):
             print(f"DEBUG: Error en Ctrl+N: {e}")
         return "break"
 
-    def print_or_pay_shortcut(self, event=None):
+    def print_or_pay_shortcut(self, event=None) -> None:
         """Atajo Ctrl+P: Procesar pago en POS o Imprimir en Facturas"""
         is_child, _ = self._is_child_dialog_focused()
         if is_child:
@@ -660,7 +488,7 @@ class BillingSystem(ctk.CTkToplevel):
             print(f"DEBUG: Error en Ctrl+P: {e}")
         return "break"
 
-    def on_escape_shortcut(self, event=None):
+    def on_escape_shortcut(self, event=None) -> None:
         """Atajo Escape: Cerrar diálogo hijo activo o limpiar selecciones en tablas"""
         is_child, top = self._is_child_dialog_focused()
         if is_child and top is not None:
@@ -685,11 +513,11 @@ class BillingSystem(ctk.CTkToplevel):
             pass
         return "break"
 
-    def on_window_resize(self, event):
+    def on_window_resize(self, event) -> None:
         if event.widget is self:
             self.adjust_responsive_layout(event.width, event.height)
 
-    def adjust_responsive_layout(self, width, height):
+    def adjust_responsive_layout(self, width, height) -> None:
         """Ajustar dinámicamente algunos contenedores para resoluciones más pequeñas."""
         if hasattr(self, 'top_frame') and hasattr(self, 'search_frame'):
             if width < 1100:
@@ -727,7 +555,7 @@ class BillingSystem(ctk.CTkToplevel):
 
         self.adjust_invoice_action_buttons(width)
 
-    def adjust_invoice_action_buttons(self, width=None):
+    def adjust_invoice_action_buttons(self, width=None) -> None:
         """Ajustar el layout de los botones de acción de facturas según el ancho disponible."""
         if not hasattr(self, 'invoices_action_frame') or not hasattr(self, 'invoices_action_buttons'):
             return
@@ -754,17 +582,11 @@ class BillingSystem(ctk.CTkToplevel):
         except Exception:
             pass
 
-    def load_main_logo(self):
-        """Cargar logo para la aplicación principal"""
-        self.main_logo = None
-        try:
-            if os.path.exists("img/logo.png"):
-                logo_img = Image.open("img/logo.png")
-                self.main_logo = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(30, 30))
-        except Exception as e:
-            print(f"Error loading main logo: {e}")
+    def load_main_logo(self) -> None:
+        """Cargar logo para la aplicación principal (en caché para no releer disco)"""
+        self.main_logo = load_ctk_image("img/logo.png", (30, 30))
 
-    def setup_icons(self):
+    def setup_icons(self) -> None:
         """Configurar iconos para botones"""
         self.icons = {
             "add": "➕",
@@ -783,7 +605,7 @@ class BillingSystem(ctk.CTkToplevel):
             "reports": "📊"
         }
 
-    def create_top_bar(self):
+    def create_top_bar(self) -> None:
         """Crear barra superior con herramientas"""
         self.top_frame = ctk.CTkFrame(self, height=60)
         self.top_frame.pack(side="top", fill="x", padx=10, pady=5)
@@ -812,6 +634,7 @@ class BillingSystem(ctk.CTkToplevel):
             hover_color="#1D4ED8"
         )
         self.new_invoice_btn.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        ui_kit.bind_tooltip(self.new_invoice_btn, "Crear una nueva factura (Ctrl+N)")
 
         # Separador
         ctk.CTkLabel(self.top_frame, text="|").grid(row=0, column=2, padx=10, pady=5)
@@ -863,6 +686,7 @@ class BillingSystem(ctk.CTkToplevel):
             command=self.perform_global_search
         )
         search_btn.pack(side="left", padx=5)
+        ui_kit.bind_tooltip(search_btn, "Buscar en todo el sistema (Ctrl+F)")
 
         # Botón configuración
         self.settings_btn = ctk.CTkButton(
@@ -876,6 +700,7 @@ class BillingSystem(ctk.CTkToplevel):
             hover_color="#334155"
         )
         self.settings_btn.grid(row=0, column=5, sticky="e", padx=5, pady=5)
+        ui_kit.bind_tooltip(self.settings_btn, "Configuración del sistema (tasa, IVA, escala)")
 
         # Botón cerrar sesión
         self.logout_btn = ctk.CTkButton(
@@ -889,7 +714,7 @@ class BillingSystem(ctk.CTkToplevel):
         )
         self.logout_btn.grid(row=0, column=6, sticky="e", padx=5, pady=5)
 
-    def create_point_of_sale_tab(self):
+    def create_point_of_sale_tab(self) -> None:
         """Crear interfaz de punto de venta"""
         # Frame principal con grid para layout responsivo
         main_frame = ctk.CTkFrame(self.tab_point_of_sale)
@@ -923,6 +748,7 @@ class BillingSystem(ctk.CTkToplevel):
         self.pos_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.pos_search_entry.bind("<KeyRelease>", self.on_pos_search)
         self.pos_search_entry.bind("<Return>", self.add_first_pos_search_result)
+        ui_kit.SearchSuggestionPopup(self.pos_search_entry)
 
         # Tabla de productos
         self.pos_tree_frame = ctk.CTkFrame(left_frame)
@@ -1011,6 +837,7 @@ class BillingSystem(ctk.CTkToplevel):
             command=self.quick_search_client_from_pos
         )
         search_client_btn.pack(side="left", padx=(5,0))
+        ui_kit.bind_tooltip(search_client_btn, "Buscar cliente rápidamente")
 
         # Tabla de items de la factura
         items_frame = ctk.CTkFrame(right_frame)
@@ -1117,7 +944,7 @@ class BillingSystem(ctk.CTkToplevel):
             hover_color="#475569"
         ).pack(side="left", padx=5)
 
-        ctk.CTkButton(
+        payment_btn = ctk.CTkButton(
             buttons_frame,
             text=f"{self.icons['payment']} Procesar Pago",
             command=self.process_payment,
@@ -1125,12 +952,14 @@ class BillingSystem(ctk.CTkToplevel):
             corner_radius=8,
             fg_color="#059669",
             hover_color="#047857"
-        ).pack(side="right", padx=5)
+        )
+        payment_btn.pack(side="right", padx=5)
+        ui_kit.bind_tooltip(payment_btn, "Procesar el pago de la factura actual (Ctrl+P)")
 
         # Cargar productos en el POS
         self.refresh_pos_products()
 
-    def create_inventory_tab(self):
+    def create_inventory_tab(self) -> None:
         """Crear interfaz de inventario"""
         main_frame = ctk.CTkFrame(self.tab_inventory)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -1182,6 +1011,8 @@ class BillingSystem(ctk.CTkToplevel):
         )
         self.inventory_search_entry.pack(side="left", padx=(0, 15))
         self.inventory_search_entry.bind("<KeyRelease>", self.on_inventory_search)
+        self.inventory_search_entry.bind("<Return>", lambda e: ui_kit.add_search_term(self.inventory_search_entry.get()))
+        ui_kit.SearchSuggestionPopup(self.inventory_search_entry)
 
         ctk.CTkLabel(search_frame, text="Categoría:").pack(side="left", padx=(0, 5))
         self.category_filter = ctk.CTkComboBox(
@@ -1211,6 +1042,16 @@ class BillingSystem(ctk.CTkToplevel):
             corner_radius=8,
             fg_color="#6366F1",
             hover_color="#4F46E5"
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            controls_frame,
+            text="🏷️ Etiquetas QR",
+            command=self.generate_product_labels_pdf,
+            width=130,
+            corner_radius=8,
+            fg_color="#0EA5E9",
+            hover_color="#0284C7"
         ).pack(side="left", padx=5)
 
         # Tabla de inventario
@@ -1274,7 +1115,7 @@ class BillingSystem(ctk.CTkToplevel):
 
         self.inventory_tree.bind("<Button-3>", show_inventory_menu)
 
-    def create_clients_tab(self):
+    def create_clients_tab(self) -> None:
         """Crear interfaz de gestión de clientes"""
         main_frame = ctk.CTkFrame(self.tab_clients)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -1323,6 +1164,16 @@ class BillingSystem(ctk.CTkToplevel):
             hover_color="#4F46E5"
         ).pack(side="left", padx=5)
 
+        ctk.CTkButton(
+            controls_frame,
+            text="Exportar a Excel",
+            command=self.export_selected_clients_excel,
+            width=130,
+            corner_radius=8,
+            fg_color="#059669",
+            hover_color="#047857"
+        ).pack(side="left", padx=5)
+
         # Buscador (Responsivo)
         search_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
         search_frame.pack(side="left", fill="x", expand=True, padx=10)
@@ -1335,6 +1186,8 @@ class BillingSystem(ctk.CTkToplevel):
         )
         self.client_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
         self.client_search_entry.bind("<KeyRelease>", self.on_client_search)
+        self.client_search_entry.bind("<Return>", lambda e: ui_kit.add_search_term(self.client_search_entry.get()))
+        ui_kit.SearchSuggestionPopup(self.client_search_entry)
 
         ctk.CTkLabel(search_frame, text="Tipo:").pack(side="left", padx=(10, 5))
         self.client_type_filter = ctk.CTkComboBox(
@@ -1403,7 +1256,7 @@ class BillingSystem(ctk.CTkToplevel):
 
         self.clients_tree.bind("<Button-3>", show_clients_menu)
 
-    def create_invoices_tab(self):
+    def create_invoices_tab(self) -> None:
         """Crear interfaz de gestión de facturas"""
         main_frame = ctk.CTkFrame(self.tab_invoices)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -1555,10 +1408,18 @@ class BillingSystem(ctk.CTkToplevel):
         self.invoices_action_buttons.append(ctk.CTkButton(
             self.invoices_action_frame,
             text="Exportar a Excel",
-            command=self.export_invoices_excel,
+            command=self.export_selected_invoices_excel,
             corner_radius=8,
             fg_color="#059669",
             hover_color="#047857"
+        ))
+        self.invoices_action_buttons.append(ctk.CTkButton(
+            self.invoices_action_frame,
+            text="Listado filtrado PDF",
+            command=self.export_filtered_invoices_pdf,
+            corner_radius=8,
+            fg_color="#0EA5E9",
+            hover_color="#0284C7"
         ))
 
         self.adjust_invoice_action_buttons()
@@ -1578,6 +1439,7 @@ class BillingSystem(ctk.CTkToplevel):
         self.invoices_menu.add_command(label=" Imprimir", command=self.generate_pdf_invoice)
         self.invoices_menu.add_command(label=" Nota de Entrega", command=self.generate_pdf_delivery_note)
         self.invoices_menu.add_command(label=" Exportar a Excel", command=self.export_invoices_excel)
+        self.invoices_menu.add_command(label=" Exportar listado a PDF", command=self.export_filtered_invoices_pdf)
         self.invoices_menu.add_separator()
         self.invoices_menu.add_command(label=" Marcar como Pagada", command=self.mark_invoice_as_paid)
         self.invoices_menu.add_command(label=" Anular", command=self.cancel_invoice)
@@ -1592,18 +1454,18 @@ class BillingSystem(ctk.CTkToplevel):
 
         self.invoices_tree.bind("<Button-3>", show_invoices_menu)
 
-    def create_reports_tab(self):
+    def create_reports_tab(self) -> None:
         """Crear interfaz de reportes con estética premium"""
         # Limpiar tab
         for widget in self.tab_reports.winfo_children():
             safe_destroy(widget)
 
         # Contenedor principal con efecto de "capas"
-        bg_frame = ctk.CTkFrame(self.tab_reports, fg_color=("#F8FAFC", "#0F172A"))
+        bg_frame = ctk.CTkFrame(self.tab_reports, fg_color=UI.BG_T)
         bg_frame.pack(fill="both", expand=True)
 
         # Barra lateral de navegación de reportes (Sidebar)
-        self.reports_sidebar = ctk.CTkFrame(bg_frame, width=280, corner_radius=0, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#E2E8F0", "#334155"))
+        self.reports_sidebar = ctk.CTkFrame(bg_frame, width=280, corner_radius=0, fg_color=UI.CARD_T, border_width=1, border_color=UI.MUTED_T)
         self.reports_sidebar.pack(side="left", fill="y")
         self.reports_sidebar.pack_propagate(False)
 
@@ -1611,7 +1473,7 @@ class BillingSystem(ctk.CTkToplevel):
             self.reports_sidebar,
             text="CENTRO DE REPORTES",
             font=("Inter", 16, "bold"),
-            text_color=("#64748B", "#94A3B8")
+            text_color=UI.NEUTRAL_T
         ).pack(pady=(30, 20), padx=20, anchor="w")
 
         # Lista de reportes con iconos modernos
@@ -1634,9 +1496,9 @@ class BillingSystem(ctk.CTkToplevel):
             self.report_var.set(name)
             for btn_name, btn in self.reports_buttons.items():
                 if btn_name == name:
-                    btn.configure(fg_color=("#F1F5F9", "#334155"), text_color=("#2563EB", "#60A5FA"))
+                    btn.configure(fg_color=UI.SELECT_BG_T, text_color=UI.ACCENT_T)
                 else:
-                    btn.configure(fg_color="transparent", text_color=("#475569", "#CBD5E1"))
+                    btn.configure(fg_color="transparent", text_color=UI.TEXT_SEC_T)
             self.generate_report()
 
         self.reports_buttons = {}
@@ -1649,8 +1511,8 @@ class BillingSystem(ctk.CTkToplevel):
                 height=45,
                 corner_radius=8,
                 fg_color="transparent",
-                text_color=("#475569", "#CBD5E1"),
-                hover_color=("#F1F5F9", "#334155"),
+                text_color=UI.TEXT_SEC_T,
+                hover_color=UI.SELECT_BG_T,
                 font=("Inter", 12),
                 command=lambda n=full_name: select_report(n)
             )
@@ -1668,8 +1530,8 @@ class BillingSystem(ctk.CTkToplevel):
             height=40,
             corner_radius=10,
             font=("Inter", 12, "bold"),
-            fg_color=("#2563EB", "#3B82F6"),
-            hover_color=("#1D4ED8", "#2563EB")
+            fg_color=UI.PRIMARY_T,
+            hover_color=UI.PRIMARY_HOVER_T
         ).pack(fill="x", pady=5)
 
         # Área de contenido
@@ -1684,7 +1546,7 @@ class BillingSystem(ctk.CTkToplevel):
             self.report_header, 
             text="Dashboard de Inteligencia", 
             font=("Inter", 24, "bold"),
-            text_color=("#1E293B", "#F8FAFC")
+            text_color=UI.TEXT_T
         )
         self.report_title_label.pack(side="left")
 
@@ -1694,8 +1556,8 @@ class BillingSystem(ctk.CTkToplevel):
             font=("Cascadia Code", 12),
             corner_radius=12,
             border_width=1,
-            border_color=("#E2E8F0", "#334155"),
-            fg_color=("#FFFFFF", "#1E293B")
+            border_color=UI.MUTED_T,
+            fg_color=UI.CARD_T
         )
 
         # Botón de refrescar (Único, movido desde update_dashboard)
@@ -1706,18 +1568,22 @@ class BillingSystem(ctk.CTkToplevel):
             height=32,
             corner_radius=8,
             command=self.update_dashboard,
-            fg_color=("#F1F5F9", "#334155"),
-            text_color=("#475569", "#CBD5E1"),
-            hover_color=("#E2E8F0", "#475569"),
+            fg_color=UI.SELECT_BG_T,
+            text_color=UI.TEXT_SEC_T,
+            hover_color=UI.BORDER_LIGHT_T,
             font=("Inter", 11, "bold")
         )
         self.refresh_report_btn.pack(side="right")
+        ui_kit.bind_tooltip(self.refresh_report_btn, "Actualizar el panel actual (F5)")
+        self.update_dashboard(include_charts=False)
 
-        # Inicialmente mostrar dashboard
-        self.update_dashboard()
+    def update_dashboard(self, include_charts: bool = True) -> None:
+        """Actualizar el dashboard con una estética minimalista y moderna.
 
-    def update_dashboard(self):
-        """Actualizar el dashboard con una estética minimalista y moderna"""
+        Si ``include_charts`` es False solo se dibujan las tarjetas KPI y se
+        ofrece un botón «Generar» para construir los gráficos bajo demanda
+        (lazy loading de los paneles pesados).
+        """
         # Validar si report_content_area existe antes de intentar acceder o limpiar sus elementos
         if not hasattr(self, 'report_content_area') or not self.report_content_area:
             return
@@ -1740,6 +1606,14 @@ class BillingSystem(ctk.CTkToplevel):
         if hasattr(self, 'refresh_report_btn') and self.refresh_report_btn and self.refresh_report_btn.winfo_exists():
             self.refresh_report_btn.pack(side="right")
 
+        # Indicador de carga (skeleton shimmer) mientras se construye el dashboard
+        _skeleton = ui_kit.SkeletonShimmer(self.report_content_area, bg=UI.CARD_T)
+        _skeleton.show()
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+
         # Contenedor con scroll elegante
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -1760,22 +1634,43 @@ class BillingSystem(ctk.CTkToplevel):
         ]
 
         for title, val, icon, color in cards_data:
-            card = ctk.CTkFrame(kpi_container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+            card = ctk.CTkFrame(kpi_container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
             card.pack(side="left", fill="both", expand=True, padx=8)
             
             ctk.CTkLabel(card, text=icon, font=("Inter", 24), text_color=color).pack(pady=(20, 5))
-            ctk.CTkLabel(card, text=title, font=("Inter", 12), text_color=("#64748B", "#94A3B8")).pack()
-            ctk.CTkLabel(card, text=val, font=("Inter", 20, "bold"), text_color=("#1E293B", "#F8FAFC")).pack(pady=(0, 20))
+            ctk.CTkLabel(card, text=title, font=("Inter", 12), text_color=UI.NEUTRAL_T).pack()
+            ctk.CTkLabel(card, text=val, font=("Inter", 20, "bold"), text_color=UI.TEXT_T).pack(pady=(0, 20))
 
-        # --- SECCIÓN GRÁFICOS: GRID MODERNO ---
+        # --- SECCIÓN GRÁFICOS: GRID MODERNO (lazy loading) ---
+        if not include_charts:
+            lazy_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
+            lazy_card.pack(fill="both", expand=True, padx=8, pady=8)
+            ctk.CTkLabel(lazy_card, text="📊", font=("Inter", 34), text_color=UI.NEUTRAL_T).pack(pady=(46, 6))
+            ctk.CTkLabel(
+                lazy_card, text="Los gráficos analíticos no se calculan automáticamente",
+                font=("Inter", 15, "bold"), text_color=UI.TEXT_SEC_T
+            ).pack()
+            ctk.CTkLabel(
+                lazy_card, text="Genera los gráficos cuando los necesites para mantener el sistema ágil.",
+                font=("Inter", 12), text_color=UI.NEUTRAL_T
+            ).pack(pady=(4, 18))
+            ctk.CTkButton(
+                lazy_card, text="⚡ Generar Gráficos", height=42, corner_radius=10,
+                font=("Inter", 12, "bold"),
+                fg_color=UI.PRIMARY, hover_color=UI.PRIMARY_HOVER,
+                command=lambda: self.update_dashboard(include_charts=True)
+            ).pack(pady=(0, 46))
+            _skeleton.hide()
+            return
+
         charts_grid = ctk.CTkFrame(container, fg_color="transparent")
         charts_grid.pack(fill="both", expand=True)
         charts_grid.grid_columnconfigure((0, 1), weight=1)
 
         def create_chart_container(parent, title, row, col):
-            f = ctk.CTkFrame(parent, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+            f = ctk.CTkFrame(parent, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
             f.grid(row=row, column=col, sticky="nsew", padx=8, pady=8)
-            ctk.CTkLabel(f, text=title, font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+            ctk.CTkLabel(f, text=title, font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
             return f
 
         # Configuración Matplotlib Premium
@@ -1807,7 +1702,9 @@ class BillingSystem(ctk.CTkToplevel):
         canvas4 = FigureCanvasTkAgg(self.create_top_clients_chart(plt_bg, plt_fg), master=f4)
         canvas4.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-    def create_top_clients_chart(self, bg_color, fg_color):
+        _skeleton.hide()
+
+    def create_top_clients_chart(self, bg_color, fg_color) -> None:
         fig = Figure(figsize=(5, 3), dpi=100, facecolor=bg_color)
         ax = fig.add_subplot(111)
         ax.set_facecolor(bg_color)
@@ -1833,7 +1730,7 @@ class BillingSystem(ctk.CTkToplevel):
         fig.tight_layout()
         return fig
 
-    def create_sales_trend_chart(self, bg_color, fg_color):
+    def create_sales_trend_chart(self, bg_color, fg_color) -> None:
         fig = Figure(figsize=(5, 3), dpi=100, facecolor=bg_color)
         ax = fig.add_subplot(111)
         ax.set_facecolor(bg_color)
@@ -1857,11 +1754,14 @@ class BillingSystem(ctk.CTkToplevel):
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.grid(axis='y', linestyle='--', alpha=0.3)
+        ax.tick_params(axis='x', labelrotation=25)
+        for label in ax.get_xticklabels():
+            label.set_ha('right')
         fig.tight_layout()
         return fig
 
-    def create_top_products_chart(self, bg_color, fg_color):
-        fig = Figure(figsize=(5, 3), dpi=100, facecolor=bg_color)
+    def create_top_products_chart(self, bg_color, fg_color) -> None:
+        fig = Figure(figsize=(5, 3.2), dpi=100, facecolor=bg_color)
         ax = fig.add_subplot(111)
         ax.set_facecolor(bg_color)
         
@@ -1886,16 +1786,20 @@ class BillingSystem(ctk.CTkToplevel):
             names, counts = ["Sin Datos"], [0]
             
         colors = ["#2563EB", "#059669", "#6366F1", "#F59E0B", "#DC2626"]
-        ax.bar(names, counts, color=colors[:len(names)])
+        ax.barh(names, counts, color=colors[:len(names)])
         ax.set_title("Productos Más Vendidos (Cant.)", fontsize=10, fontweight='bold', pad=10)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-        fig.tight_layout()
+        ax.grid(axis='x', linestyle='--', alpha=0.25)
+        ax.set_axisbelow(True)
+        ax.invert_yaxis()
+        ax.bar_label(ax.containers[0], padding=4, fontsize=9, color=fg_color)
+        fig.subplots_adjust(left=0.32, right=0.96, top=0.82, bottom=0.14)
         return fig
 
-    def create_category_sales_chart(self, bg_color, fg_color):
+    def create_category_sales_chart(self, bg_color, fg_color) -> None:
         """Crear gráfico de ventas por categoría usando la categoría de cada producto."""
-        fig = Figure(figsize=(5, 3), dpi=100, facecolor=bg_color)
+        fig = Figure(figsize=(5, 3.2), dpi=100, facecolor=bg_color)
         ax = fig.add_subplot(111)
         ax.set_facecolor(bg_color)
 
@@ -1916,7 +1820,7 @@ class BillingSystem(ctk.CTkToplevel):
             ax.set_title("Ventas por Categoría", fontsize=10, fontweight='bold', pad=10)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            fig.tight_layout()
+            fig.subplots_adjust(left=0.32, right=0.96, top=0.82, bottom=0.14)
             return fig
 
         sorted_categories = sorted(category_sales.items(), key=lambda x: x[1], reverse=True)[:5]
@@ -1924,14 +1828,18 @@ class BillingSystem(ctk.CTkToplevel):
         values = [value for _, value in sorted_categories]
         palette = ["#2563EB", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"]
 
-        ax.bar(labels, values, color=palette[:len(labels)])
+        ax.barh(labels, values, color=palette[:len(labels)])
         ax.set_title("Ventas por Categoría ($)", fontsize=10, fontweight='bold', pad=10)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-        fig.tight_layout()
+        ax.grid(axis='x', linestyle='--', alpha=0.25)
+        ax.set_axisbelow(True)
+        ax.invert_yaxis()
+        ax.bar_label(ax.containers[0], fmt='$%.2f', padding=4, fontsize=8, color=fg_color)
+        fig.subplots_adjust(left=0.32, right=0.96, top=0.82, bottom=0.14)
         return fig
 
-    def get_selected_invoice_data(self):
+    def get_selected_invoice_data(self) -> Optional[Dict[str, Any]]:
         """Devuelve el diccionario de la factura seleccionada en la tabla de facturas."""
         try:
             selection = self.invoices_tree.selection()
@@ -1950,7 +1858,7 @@ class BillingSystem(ctk.CTkToplevel):
 
     # === FUNCIONES PRINCIPALES ===
 
-    def configure_ttk_styles(self):
+    def configure_ttk_styles(self) -> None:
         """Configurar estilos ttk para el tema claro con paleta moderna"""
         bg_color = "#F8FAFC"
         fg_color = "#1E293B"
@@ -2014,7 +1922,7 @@ class BillingSystem(ctk.CTkToplevel):
                                 borderwidth=0,
                                 relief="flat")
 
-    def create_new_invoice(self):
+    def create_new_invoice(self) -> None:
         """Crear una nueva factura"""
         self.current_invoice_items = []
         self.invoice_counter += 1
@@ -2035,7 +1943,7 @@ class BillingSystem(ctk.CTkToplevel):
         ModernMessageBox.showinfo("Nueva Factura", f"Factura #{self.invoice_counter} creada")
         self.save_data()
 
-    def add_product_to_invoice(self, event=None):
+    def add_product_to_invoice(self, event=None) -> None:
         """Agregar producto seleccionado a la factura"""
         selection = self.pos_tree.selection()
         if not selection:
@@ -2131,7 +2039,7 @@ class BillingSystem(ctk.CTkToplevel):
 
         ctk.CTkButton(dialog, text="Agregar", command=add_with_qty).pack(pady=20)
 
-    def add_item_manual(self):
+    def add_item_manual(self) -> None:
         """Agregar item manualmente (Agrupar)"""
         # Verificar si hay selección en el POS
         selection = self.pos_tree.selection()
@@ -2226,7 +2134,7 @@ class BillingSystem(ctk.CTkToplevel):
         qty_entry.bind("<Return>", lambda e: add_manual_item())
         ctk.CTkButton(dialog, text="Confirmar", command=add_manual_item, fg_color="#059669", hover_color="#047857").pack(pady=15)
 
-    def refresh_invoice_tree(self):
+    def refresh_invoice_tree(self) -> None:
         """Refrescar la tabla de items de la factura"""
         # Limpiar tabla
         for item in self.invoice_tree.get_children():
@@ -2252,7 +2160,7 @@ class BillingSystem(ctk.CTkToplevel):
         self.tax_label.configure(text=f"IVA ({self.iva_rate*100:.0f}%): ${tax:.2f}")
         self.total_label.configure(text=f"TOTAL: ${total:.2f}")
 
-    def remove_selected_invoice_item(self, event=None):
+    def remove_selected_invoice_item(self, event=None) -> None:
         """Eliminar el o los items seleccionados de la factura actual"""
         selection = self.invoice_tree.selection()
         if not selection:
@@ -2267,14 +2175,14 @@ class BillingSystem(ctk.CTkToplevel):
         # Refrescar vista
         self.refresh_invoice_tree()
 
-    def clear_current_invoice(self):
+    def clear_current_invoice(self) -> None:
         """Limpiar la factura actual"""
         self.current_invoice_items = []
         self.client_var.set("")
         self.refresh_invoice_tree()
         self.invoice_date_label.configure(text=f"Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
-    def process_payment(self):
+    def process_payment(self) -> None:
         """Procesar pago de la factura"""
         if not self.current_invoice_items:
             ModernMessageBox.showwarning("Factura Vacía", "Agregue productos a la factura primero")
@@ -2439,22 +2347,29 @@ class BillingSystem(ctk.CTkToplevel):
                      corner_radius=8,
                      height=40, font=("Segoe UI", 12, "bold")).pack(pady=20)
 
-    def open_settings_dialog(self):
+    def open_settings_dialog(self) -> None:
         """Abrir diálogo de configuración"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Configuración del Sistema")
-        dialog.geometry("560x760")
+        screen_w = dialog.winfo_screenwidth()
+        screen_h = dialog.winfo_screenheight()
+        dialog.geometry(f"{min(620, max(460, int(screen_w * 0.46)))}x{min(860, max(460, int(screen_h * 0.88)))}")
+        dialog.minsize(460, 460)
+        dialog.resizable(True, True)
         dialog.transient(self)
         dialog.grab_set()
         fade_in_window(dialog)
+
+        settings_content = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
+        settings_content.pack(fill="both", expand=True, padx=8, pady=8)
         
-        ctk.CTkLabel(dialog, text="CONFIGURACIÓN DEL SISTEMA", font=("Segoe UI", 16, "bold")).pack(pady=(15, 10))
+        ctk.CTkLabel(settings_content, text="CONFIGURACIÓN DEL SISTEMA", font=("Segoe UI", 16, "bold")).pack(pady=(8, 10))
         
         # ---- DATOS DE LA TIENDA ----
-        store_label = ctk.CTkLabel(dialog, text="DATOS DE LA TIENDA", font=("Segoe UI", 13, "bold"), text_color="#2563EB")
+        store_label = ctk.CTkLabel(settings_content, text="DATOS DE LA TIENDA", font=("Segoe UI", 13, "bold"), text_color="#2563EB")
         store_label.pack(pady=(5, 5))
 
-        store_frame = ctk.CTkFrame(dialog, fg_color="#F8FAFC")
+        store_frame = ctk.CTkFrame(settings_content, fg_color="#F8FAFC")
         store_frame.pack(fill="x", padx=20, pady=(0, 8))
 
         # Nombre de la tienda
@@ -2489,11 +2404,19 @@ class BillingSystem(ctk.CTkToplevel):
         phone_entry.insert(0, getattr(self, 'company_phone', '') if getattr(self, 'company_phone', '') != 'Teléfono: N/A' else '')
         phone_entry.pack(side="right", padx=5, fill="x", expand=True)
 
+        # URL de la tienda / QR
+        store_url_frame = ctk.CTkFrame(store_frame, fg_color="transparent")
+        store_url_frame.pack(fill="x", padx=10, pady=5)
+        ctk.CTkLabel(store_url_frame, text="URL de la tienda:", font=("Segoe UI", 11)).pack(side="left", padx=5)
+        store_url_entry = ctk.CTkEntry(store_url_frame, width=250)
+        store_url_entry.insert(0, getattr(self, 'store_url', getattr(config.AppConfig, 'STORE_URL', '')) or '')
+        store_url_entry.pack(side="right", padx=5, fill="x", expand=True)
+
         # Separador
-        ctk.CTkLabel(dialog, text="" ).pack()
+        ctk.CTkLabel(settings_content, text="" ).pack()
 
         # IVA
-        iva_frame = ctk.CTkFrame(dialog)
+        iva_frame = ctk.CTkFrame(settings_content)
         iva_frame.pack(fill="x", padx=20, pady=5)
         
         ctk.CTkLabel(iva_frame, text="IVA (%):", font=("Segoe UI", 12)).pack(side="left", padx=10, pady=5)
@@ -2502,7 +2425,7 @@ class BillingSystem(ctk.CTkToplevel):
         iva_entry.pack(side="right", padx=10, pady=5)
         
         # Tasa de cambio
-        exchange_frame = ctk.CTkFrame(dialog)
+        exchange_frame = ctk.CTkFrame(settings_content)
         exchange_frame.pack(fill="x", padx=20, pady=5)
         
         ctk.CTkLabel(exchange_frame, text="Tasa USD a VES:", font=("Segoe UI", 12)).pack(side="left", padx=10, pady=5)
@@ -2511,11 +2434,11 @@ class BillingSystem(ctk.CTkToplevel):
         exchange_entry.pack(side="right", padx=10, pady=5)
         
         # Botón para consultar tasa oficial BCV
-        query_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        query_frame = ctk.CTkFrame(settings_content, fg_color="transparent")
         query_frame.pack(fill="x", padx=20, pady=5)
         
         # Status Label para la consulta de tasa BCV
-        status_label = ctk.CTkLabel(dialog, text="Consulte la tasa oficial BCV en tiempo real", font=("Segoe UI", 11, "italic"), text_color="#64748B")
+        status_label = ctk.CTkLabel(settings_content, text="Consulte la tasa oficial BCV en tiempo real", font=("Segoe UI", 11, "italic"), text_color="#64748B")
         
         def fetch_bcv():
             status_label.configure(text="Consultando tasa oficial BCV...", text_color="#2563EB")
@@ -2552,7 +2475,7 @@ class BillingSystem(ctk.CTkToplevel):
         status_label.pack(pady=(0, 5))
         
         # Controles de Auto-actualización (Exclusivo BCV)
-        auto_frame = ctk.CTkFrame(dialog)
+        auto_frame = ctk.CTkFrame(settings_content)
         auto_frame.pack(fill="x", padx=20, pady=5)
         
         auto_var = tk.BooleanVar(value=getattr(self, "auto_update_rate", False))
@@ -2560,7 +2483,7 @@ class BillingSystem(ctk.CTkToplevel):
         auto_cb.pack(side="left", padx=10, pady=5)
         
         # Inclusión de facturas pendientes en Dashboard
-        pending_frame = ctk.CTkFrame(dialog)
+        pending_frame = ctk.CTkFrame(settings_content)
         pending_frame.pack(fill="x", padx=20, pady=5)
         
         pending_var = tk.BooleanVar(value=self.include_pending_in_dashboard)
@@ -2568,7 +2491,27 @@ class BillingSystem(ctk.CTkToplevel):
                                    variable=pending_var, font=("Segoe UI", 12))
         pending_cb.pack(side="left", padx=10, pady=5)
 
-        folder_frame = ctk.CTkFrame(dialog)
+        # Escala de interfaz
+        scale_frame = ctk.CTkFrame(settings_content)
+        scale_frame.pack(fill="x", padx=20, pady=(10, 5))
+
+        ctk.CTkLabel(scale_frame, text="Escala de Interfaz:", font=("Segoe UI", 12)).pack(side="left", padx=10, pady=5)
+        scale_var = tk.StringVar(value=ui_kit.current_ui_scaling())
+        ctk.CTkOptionMenu(
+            scale_frame,
+            values=ui_kit.SCALE_OPTIONS,
+            variable=scale_var,
+            width=120,
+            font=("Segoe UI", 12),
+        ).pack(side="right", padx=10, pady=5)
+        ctk.CTkLabel(
+            settings_content,
+            text="La escala se aplicará al reiniciar la aplicación.",
+            font=("Segoe UI", 10, "italic"),
+            text_color=UI.TEXT_MUTED,
+        ).pack(anchor="center")
+
+        folder_frame = ctk.CTkFrame(settings_content)
         folder_frame.pack(fill="x", padx=20, pady=(10, 5))
         
         ctk.CTkLabel(folder_frame, text="Exportaciones:", font=("Segoe UI", 12)).pack(side="left", padx=(0, 8))
@@ -2597,8 +2540,14 @@ class BillingSystem(ctk.CTkToplevel):
             hover_color="#0284C7"
         ).pack(side="right", padx=10)
         
+        saving_settings = False
+
         def save_settings():
+            nonlocal saving_settings
+            if saving_settings:
+                return
             try:
+                saving_settings = True
                 self.iva_rate = float(iva_entry.get()) / 100
                 self.exchange_rate = float(exchange_entry.get())
                 self.include_pending_in_dashboard = pending_var.get()
@@ -2610,6 +2559,11 @@ class BillingSystem(ctk.CTkToplevel):
                 self.company_rif = rif_entry.get().strip() or "RIF: N/A"
                 self.company_address = address_entry.get().strip() or "Domicilio fiscal: N/A"
                 self.company_phone = phone_entry.get().strip() or "Teléfono: N/A"
+                self.store_url = store_url_entry.get().strip() or getattr(config.AppConfig, 'STORE_URL', '')
+                db.set_config("store_url", self.store_url)
+                
+                # Guardar escala de interfaz (se aplica al reiniciar)
+                ui_kit.save_ui_scaling(scale_var.get())
                 
                 self.save_data()
                 self.update_dashboard() # Auto-refresh dashboard after settings change
@@ -2617,22 +2571,38 @@ class BillingSystem(ctk.CTkToplevel):
                 # Si se activa la auto-actualización, realizar una consulta inmediata
                 if self.auto_update_rate:
                     self.trigger_immediate_auto_update()
-                    
-                ModernMessageBox.showinfo("Configuración Guardada", "Los ajustes han sido guardados exitosamente", parent=dialog)
+
+                # Usar la ventana principal como padre evita que el aviso
+                # quede ligado al diálogo que se cerrará inmediatamente.
+                ModernMessageBox.showinfo(
+                    "Configuración Guardada",
+                    "Los ajustes han sido guardados exitosamente",
+                    parent=self,
+                )
                 safe_destroy(dialog)
             except ValueError:
+                saving_settings = False
                 ModernMessageBox.showerror("Error", "Ingrese valores numéricos válidos", parent=dialog)
+            except tk.TclError:
+                safe_destroy(dialog)
         
         # Vincular teclas Enter y Escape
         dialog.bind("<Return>", lambda e: save_settings())
         dialog.bind("<Escape>", lambda e: safe_destroy(dialog))
 
-        ctk.CTkButton(dialog, text="GUARDAR CONFIGURACIÓN", command=save_settings, 
-                     fg_color="#059669", hover_color="#047857",
-                     corner_radius=8,
-                     height=40, font=("Segoe UI", 12, "bold")).pack(pady=15)
+        save_button = ctk.CTkButton(
+            settings_content,
+            text="GUARDAR CONFIGURACIÓN",
+            command=save_settings,
+            fg_color="#059669",
+            hover_color="#047857",
+            corner_radius=8,
+            height=40,
+            font=("Segoe UI", 12, "bold"),
+        )
+        save_button.pack(pady=15)
 
-    def open_new_product_dialog(self):
+    def open_new_product_dialog(self) -> None:
         """Abrir diálogo para nuevo producto"""
         if not self._require_admin("crear productos"):
             return
@@ -2713,27 +2683,46 @@ class BillingSystem(ctk.CTkToplevel):
             row += 1
         
         dialog.grid_columnconfigure(1, weight=1)
-        
+
+        # Validación inline
+        error_label = ctk.CTkLabel(dialog, text="", anchor="w")
+        error_label.grid(row=row, column=0, columnspan=2, sticky="w", padx=20)
+        for req_name, msg in (("Código", "El código es requerido"),
+                              ("Nombre", "El nombre es requerido"),
+                              ("Precio de Venta", "Precio de venta inválido")):
+            if req_name in entries:
+                ui_kit.attach_inline_validation(entries[req_name], error_label)
+
         def save_product():
             try:
+                name = entries["Nombre"].get().strip()
+                code = entries["Código"].get().strip()
+                price_text = entries["Precio de Venta"].get().strip()
+                if not name:
+                    ui_kit.mark_invalid(entries["Nombre"], error_label, "El nombre es requerido")
+                    return
+                if not code:
+                    ui_kit.mark_invalid(entries["Código"], error_label, "El código es requerido")
+                    return
+                try:
+                    price_val = float(price_text or 0)
+                except ValueError:
+                    ui_kit.mark_invalid(entries["Precio de Venta"], error_label, "Precio de venta inválido")
+                    return
+
                 product = {
                     "id": max((p["id"] for p in self.products), default=0) + 1,
-                    "code": entries["Código"].get(),
-                    "name": entries["Nombre"].get(),
+                    "code": code,
+                    "name": name,
                     "category": entries["Categoría"].get(),
                     "purchase_price": float(entries["Precio de Compra"].get() or 0),
-                    "price": float(entries["Precio de Venta"].get() or 0),
+                    "price": price_val,
                     "stock": int(entries["Stock Inicial"].get() or 0),
                     "min_stock": int(entries["Stock Mínimo"].get() or 0),
                     "location": entries["Ubicación"].get(),
                     "supplier": entries["Proveedor"].get(),
                     "notes": entries["Notas"].get("1.0", "end-1c") if isinstance(entries["Notas"], ctk.CTkTextbox) else ""
                 }
-                
-                # Validaciones
-                if not product["name"]:
-                    ModernMessageBox.showerror("Error", "El nombre es requerido", parent=dialog)
-                    return
                 
                 self.products.append(product)
                 self.save_data()
@@ -2746,18 +2735,18 @@ class BillingSystem(ctk.CTkToplevel):
                 safe_destroy(dialog)
                 
             except ValueError:
-                ModernMessageBox.showerror("Error", "Valores numéricos inválidos", parent=dialog)
+                ui_kit.mark_invalid(entries["Precio de Compra"], error_label, "Valores numéricos inválidos")
         
         # Vincular tecla Enter
         dialog.bind("<Return>", lambda e: save_product())
 
         button_frame = ctk.CTkFrame(dialog)
-        button_frame.grid(row=row, column=0, columnspan=2, pady=20)
+        button_frame.grid(row=row + 1, column=0, columnspan=2, pady=20)
         
         ctk.CTkButton(button_frame, text="Guardar", command=save_product, width=120).pack(side="left", padx=10)
         ctk.CTkButton(button_frame, text="Cancelar", command=dialog.destroy, width=120, fg_color="#64748B").pack(side="left", padx=10)
 
-    def open_edit_product_dialog(self):
+    def open_edit_product_dialog(self) -> None:
         """Abrir diálogo para editar producto (estrictamente de uno en uno)"""
         if not self._require_admin("editar el inventario"):
             return
@@ -2839,11 +2828,34 @@ class BillingSystem(ctk.CTkToplevel):
             row += 1
         
         dialog.grid_columnconfigure(1, weight=1)
-        
+
+        # Validación inline
+        error_label = ctk.CTkLabel(dialog, text="", anchor="w")
+        error_label.grid(row=row, column=0, columnspan=2, sticky="w", padx=20)
+        for req_name, msg in (("Código", "El código es requerido"),
+                              ("Nombre", "El nombre es requerido"),
+                              ("Precio de Venta", "Precio de venta inválido")):
+            if req_name in entries:
+                ui_kit.attach_inline_validation(entries[req_name], error_label)
+
         def update_product():
             try:
-                product["code"] = entries["Código"].get()
-                product["name"] = entries["Nombre"].get()
+                code = entries["Código"].get().strip()
+                name = entries["Nombre"].get().strip()
+                if not name:
+                    ui_kit.mark_invalid(entries["Nombre"], error_label, "El nombre es requerido")
+                    return
+                if not code:
+                    ui_kit.mark_invalid(entries["Código"], error_label, "El código es requerido")
+                    return
+                try:
+                    float(entries["Precio de Venta"].get() or 0)
+                except ValueError:
+                    ui_kit.mark_invalid(entries["Precio de Venta"], error_label, "Precio de venta inválido")
+                    return
+
+                product["code"] = code
+                product["name"] = name
                 product["category"] = entries["Categoría"].get()
                 product["purchase_price"] = float(entries["Precio de Compra"].get() or 0)
                 product["price"] = float(entries["Precio de Venta"].get() or 0)
@@ -2862,19 +2874,19 @@ class BillingSystem(ctk.CTkToplevel):
                 safe_destroy(dialog)
                 
             except ValueError:
-                ModernMessageBox.showerror("Error", "Valores numéricos inválidos", parent=dialog)
+                ui_kit.mark_invalid(entries["Precio de Compra"], error_label, "Valores numéricos inválidos")
         
         # Vincular teclas Enter y Escape
         dialog.bind("<Return>", lambda e: update_product())
         dialog.bind("<Escape>", lambda e: safe_destroy(dialog))
 
         button_frame = ctk.CTkFrame(dialog)
-        button_frame.grid(row=row, column=0, columnspan=2, pady=20)
+        button_frame.grid(row=row + 1, column=0, columnspan=2, pady=20)
         
         ctk.CTkButton(button_frame, text="Actualizar", command=update_product, width=120).pack(side="left", padx=10)
         ctk.CTkButton(button_frame, text="Cancelar", command=dialog.destroy, width=120, fg_color="#64748B").pack(side="left", padx=10)
 
-    def delete_product(self):
+    def delete_product(self) -> None:
         """Eliminar producto(s) seleccionado(s) permitiendo selección múltiple"""
         if not self._require_admin("eliminar productos del inventario"):
             return
@@ -2916,7 +2928,7 @@ class BillingSystem(ctk.CTkToplevel):
             else:
                 ModernMessageBox.showinfo("Éxito", f"{len(ids_to_delete)} productos eliminados correctamente")
 
-    def open_new_client_dialog(self):
+    def open_new_client_dialog(self) -> None:
         """Abrir diálogo para nuevo cliente"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Nuevo Cliente")
@@ -2965,28 +2977,40 @@ class BillingSystem(ctk.CTkToplevel):
             row += 1
         
         dialog.grid_columnconfigure(1, weight=1)
-        
+
+        # Validación inline
+        error_label = ctk.CTkLabel(dialog, text="", anchor="w")
+        error_label.grid(row=row, column=0, columnspan=2, sticky="w", padx=20)
+        for req_name in ("Nombre/Razón Social", "RIF/Cédula de Identidad (CI)"):
+            if req_name in entries:
+                ui_kit.attach_inline_validation(entries[req_name], error_label)
+
         def save_client():
             try:
+                name = entries["Nombre/Razón Social"].get().strip()
+                rif_ci = entries["RIF/Cédula de Identidad (CI)"].get().strip()
+                if not name:
+                    ui_kit.mark_invalid(entries["Nombre/Razón Social"], error_label, "El nombre es requerido")
+                    return
+                if not rif_ci:
+                    ui_kit.mark_invalid(entries["RIF/Cédula de Identidad (CI)"], error_label, "El RIF/CI es requerido")
+                    return
+                credit_days = int(entries.get("Días de crédito").get() or 0) if entries.get("Días de crédito") else 0
                 client = {
                     "id": max((c["id"] for c in self.clients), default=0) + 1,
-                    "name": entries["Nombre/Razón Social"].get(),
-                    "rif_ci": format_ci_rif(entries["RIF/Cédula de Identidad (CI)"].get()),
+                    "name": name,
+                    "rif_ci": format_ci_rif(rif_ci),
                     "type": entries["Tipo"].get(),
                     "phone": entries["Teléfono"].get(),
                     "email": entries["Email"].get(),
                     "address": entries["Dirección"].get("1.0", "end-1c") if isinstance(entries["Dirección"], ctk.CTkTextbox) else "",
-                    "credit_days": int(entries.get("Días de crédito").get() or 0) if entries.get("Días de crédito") else 0,
-                    "credit_start_date": datetime.now().strftime("%d/%m/%Y") if int(entries.get("Días de crédito").get() or 0) > 0 else None,
+                    "credit_days": credit_days,
+                    "credit_start_date": datetime.now().strftime("%d/%m/%Y") if credit_days > 0 else None,
                     "city": entries["Ciudad"].get(),
                     "state": entries["Estado"].get(),
                     "postal_code": entries["Código Postal"].get(),
                     "notes": entries["Notas"].get("1.0", "end-1c") if isinstance(entries["Notas"], ctk.CTkTextbox) else ""
                 }
-                
-                if not client["name"]:
-                    ModernMessageBox.showerror("Error", "El nombre es requerido", parent=dialog)
-                    return
                 
                 self.clients.append(client)
                 self.save_data()
@@ -2999,18 +3023,18 @@ class BillingSystem(ctk.CTkToplevel):
                 safe_destroy(dialog)
                 
             except Exception as e:
-                ModernMessageBox.showerror("Error", f"Error al guardar: {str(e)}", parent=dialog)
+                ui_kit.mark_invalid(entries["Días de crédito"], error_label, f"Error al guardar: {str(e)}")
         
         # Vincular tecla Enter
         dialog.bind("<Return>", lambda e: save_client())
 
         button_frame = ctk.CTkFrame(dialog)
-        button_frame.grid(row=row, column=0, columnspan=2, pady=20)
+        button_frame.grid(row=row + 1, column=0, columnspan=2, pady=20)
         
         ctk.CTkButton(button_frame, text="Guardar", command=save_client, width=120).pack(side="left", padx=10)
         ctk.CTkButton(button_frame, text="Cancelar", command=dialog.destroy, width=120, fg_color="#64748B").pack(side="left", padx=10)
 
-    def open_edit_client_dialog(self):
+    def open_edit_client_dialog(self) -> None:
         """Abrir diálogo para editar cliente (estrictamente de uno en uno)"""
         if not self._require_admin("editar clientes"):
             return
@@ -3091,11 +3115,27 @@ class BillingSystem(ctk.CTkToplevel):
             row += 1
         
         dialog.grid_columnconfigure(1, weight=1)
-        
+
+        # Validación inline
+        error_label = ctk.CTkLabel(dialog, text="", anchor="w")
+        error_label.grid(row=row, column=0, columnspan=2, sticky="w", padx=20)
+        for req_name in ("Nombre/Razón Social", "RIF/Cédula de Identidad (CI)"):
+            if req_name in entries:
+                ui_kit.attach_inline_validation(entries[req_name], error_label)
+
         def update_client():
             try:
-                client["name"] = entries["Nombre/Razón Social"].get()
-                client["rif_ci"] = format_ci_rif(entries["RIF/Cédula de Identidad (CI)"].get())
+                name = entries["Nombre/Razón Social"].get().strip()
+                rif_ci = entries["RIF/Cédula de Identidad (CI)"].get().strip()
+                if not name:
+                    ui_kit.mark_invalid(entries["Nombre/Razón Social"], error_label, "El nombre es requerido")
+                    return
+                if not rif_ci:
+                    ui_kit.mark_invalid(entries["RIF/Cédula de Identidad (CI)"], error_label, "El RIF/CI es requerido")
+                    return
+
+                client["name"] = name
+                client["rif_ci"] = format_ci_rif(rif_ci)
                 client["type"] = entries["Tipo"].get()
                 client["phone"] = entries["Teléfono"].get()
                 client["email"] = entries["Email"].get()
@@ -3124,19 +3164,19 @@ class BillingSystem(ctk.CTkToplevel):
                 safe_destroy(dialog)
                 
             except Exception as e:
-                ModernMessageBox.showerror("Error", f"Error al actualizar: {str(e)}", parent=dialog)
+                ui_kit.mark_invalid(entries["Días de crédito"], error_label, f"Error al actualizar: {str(e)}")
         
         # Vincular teclas Enter y Escape
         dialog.bind("<Return>", lambda e: update_client())
         dialog.bind("<Escape>", lambda e: safe_destroy(dialog))
 
         button_frame = ctk.CTkFrame(dialog)
-        button_frame.grid(row=row, column=0, columnspan=2, pady=20)
+        button_frame.grid(row=row + 1, column=0, columnspan=2, pady=20)
         
         ctk.CTkButton(button_frame, text="Actualizar", command=update_client, width=120).pack(side="left", padx=10)
         ctk.CTkButton(button_frame, text="Cancelar", command=dialog.destroy, width=120, fg_color="#64748B").pack(side="left", padx=10)
 
-    def delete_client(self):
+    def delete_client(self) -> None:
         """Eliminar cliente(s) seleccionado(s) permitiendo selección múltiple"""
         selection = self.clients_tree.selection()
         if not selection:
@@ -3176,7 +3216,7 @@ class BillingSystem(ctk.CTkToplevel):
             else:
                 ModernMessageBox.showinfo("Éxito", f"{len(ids_to_delete)} clientes eliminados correctamente")
 
-    def add_client_from_pos(self):
+    def add_client_from_pos(self) -> None:
         """Agregar cliente rápido desde el POS"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Nuevo Cliente Rápido")
@@ -3229,7 +3269,7 @@ class BillingSystem(ctk.CTkToplevel):
 
         ctk.CTkButton(dialog, text="Guardar", command=save_quick_client).pack(pady=20)
 
-    def quick_search_client_from_pos(self):
+    def quick_search_client_from_pos(self) -> None:
         """Buscar cliente rápido desde POS y asignarlo a la factura actual"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Buscar Cliente")
@@ -3277,13 +3317,17 @@ class BillingSystem(ctk.CTkToplevel):
 
         refresh_list()
 
-    def update_client_combobox(self):
+    def update_client_combobox(self) -> None:
         """Actualizar lista de clientes en el combobox"""
         client_names = [c["name"] for c in self.clients]
         self.client_combobox.configure(values=client_names)
 
-    def generate_pdf_invoice(self, invoice_data=None, filename="factura.pdf"):
-        """Generar una factura fiscal en formato carta, lista para imprimir."""
+    def generate_pdf_invoice(self, invoice_data=None, filename="factura.pdf", preview: bool = True):
+        """Generar una factura fiscal en formato carta, lista para imprimir.
+
+        Con ``preview=True`` el PDF se construye en un archivo temporal y se
+        ofrece una vista previa antes de guardarlo en la carpeta «Facturas».
+        """
         if invoice_data is None:
             invoice_data = self.get_selected_invoice_data()
 
@@ -3294,16 +3338,22 @@ class BillingSystem(ctk.CTkToplevel):
             ModernMessageBox.showwarning("Atención", "Por favor, seleccione una factura para generar el PDF.")
             return None
 
+        temp_dir = None
         try:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            export_dir = os.path.join(base_dir, "Facturas")
+            export_dir = os.path.join(base_dir, config.AppConfig.EXPORT_DIR)
             os.makedirs(export_dir, exist_ok=True)
 
             number = invoice_data.get('number', 'sin_numero')
             if not filename or filename == "factura.pdf":
                 filename = f"Factura_{number}.pdf"
 
-            filepath = os.path.join(export_dir, os.path.basename(filename))
+            final_path = os.path.join(export_dir, os.path.basename(filename))
+            if preview:
+                temp_dir = tempfile.mkdtemp(prefix="as_factura_")
+                filepath = os.path.join(temp_dir, os.path.basename(filename))
+            else:
+                filepath = final_path
 
             doc = SimpleDocTemplate(
                 filepath,
@@ -3322,13 +3372,23 @@ class BillingSystem(ctk.CTkToplevel):
 
             body_style = ParagraphStyle('InvoiceBody', parent=styles['Normal'], fontName='Helvetica', fontSize=8.2, leading=10, textColor=colors.HexColor('#1F2937'))
             small_style = ParagraphStyle('InvoiceSmall', parent=body_style, fontSize=7.3, leading=8.7)
-            header_style = ParagraphStyle('InvoiceHeader', parent=body_style, fontSize=7.7, leading=9.3, alignment=2, textColor=colors.HexColor('#334155'))
-            title_style = ParagraphStyle('InvoiceTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=17, leading=19, textColor=colors.HexColor('#0F172A'), alignment=2, spaceAfter=2)
-            company_title_style = ParagraphStyle('InvoiceCompanyTitle', parent=body_style, fontName='Helvetica-Bold', fontSize=13, leading=16, textColor=colors.HexColor('#0F172A'), spaceAfter=2)
-            table_header_style = ParagraphStyle('InvoiceTableHeader', parent=body_style, fontName='Helvetica-Bold', fontSize=7, leading=8, textColor=colors.white, alignment=1)
+            header_style = ParagraphStyle('InvoiceHeader', parent=body_style, fontSize=7.7, leading=9.3, alignment=1, textColor=colors.HexColor('#334155'), spaceAfter=1)
+            title_style = ParagraphStyle('InvoiceTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, leading=19, textColor=colors.HexColor('#0F172A'), alignment=2, spaceAfter=2)
+            company_title_style = ParagraphStyle('InvoiceCompanyTitle', parent=body_style, fontName='Helvetica-BoldOblique', fontSize=20, leading=20, textColor=colors.HexColor('#7C4D9A'), alignment=1, spaceAfter=2)
+            invoice_badge_style = ParagraphStyle('InvoiceBadgeCentered', parent=body_style, fontName='Helvetica-Bold', fontSize=18, leading=20, alignment=1, textColor=colors.HexColor('#7C4D9A'), spaceAfter=2)
+            invoice_number_style = ParagraphStyle('InvoiceNumberCentered', parent=body_style, fontName='Helvetica-Bold', fontSize=11, leading=14, alignment=1, textColor=colors.HexColor('#0F172A'), spaceAfter=2)
+            invoice_meta_style = ParagraphStyle('InvoiceMetaCentered', parent=body_style, fontSize=7.7, leading=10.5, alignment=1, textColor=colors.HexColor('#334155'), spaceAfter=1)
+            table_header_style = ParagraphStyle('InvoiceTableHeader', parent=body_style, fontName='Helvetica-Bold', fontSize=7.1, leading=8.2, textColor=colors.white, alignment=1)
             table_cell_style = ParagraphStyle('InvoiceCell', parent=body_style, fontSize=7.4, leading=8.8)
             table_number_style = ParagraphStyle('InvoiceNumber', parent=table_cell_style, alignment=2)
             total_style = ParagraphStyle('InvoiceTotal', parent=body_style, fontName='Helvetica-Bold', fontSize=10.2, leading=12, textColor=colors.HexColor('#0F172A'))
+            brand_primary = colors.HexColor('#1F2937')
+            brand_accent = colors.HexColor('#E2E8F0')
+            brand_soft = colors.HexColor('#F8FAFC')
+            brand_dark = colors.HexColor('#0F172A')
+            brand_muted = colors.HexColor('#64748B')
+            brand_purple = colors.HexColor('#7C4D9A')
+            brand_line = colors.HexColor('#D9C7F0')
 
             def label_value(label, value):
                 return Paragraph(f"<font color='#64748B'>{label}</font><br/><b>{clean(value)}</b>", body_style)
@@ -3357,30 +3417,93 @@ class BillingSystem(ctk.CTkToplevel):
             logo_path = os.path.join(base_dir, 'img', 'logo.png')
             if os.path.exists(logo_path):
                 try:
-                    logo = RLImage(logo_path, width=0.62 * inch, height=0.62 * inch)
+                    logo = RLImage(logo_path, width=0.7 * inch, height=0.7 * inch)
                 except Exception:
                     logo = None
-            company_block = [Paragraph(clean(company_name), company_title_style), Paragraph(clean(company_rif), body_style), Paragraph(clean(company_address), small_style), Paragraph(clean(company_phone), small_style)]
-            left_header = [[logo, company_block]] if logo else [[company_block]]
-            left_widths = [0.75 * inch, 3.25 * inch] if logo else [4 * inch]
-            left_table = Table(left_header, colWidths=left_widths)
-            left_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
 
-            invoice_box = Table([
-                [Paragraph('FACTURA', title_style)],
-                [Paragraph(f"<b>N° {clean(number)}</b>", header_style)],
-                [Paragraph(f"N° de control: <b>{clean(control_number)}</b>", header_style)],
-                [Paragraph(f"Emisión: {clean(issue_day)} | Hora: {clean(issue_date.split()[-1] if issue_date else '')}", header_style)],
-                [Paragraph(f"Asignación / período: <b>{clean(assignment_date)}</b>", header_style)],
-            ], colWidths=[3.0 * inch])
-            invoice_box.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')), ('BOX', (0, 0), (-1, -1), 0.8, colors.HexColor('#CBD5E1')), ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10), ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4)]))
+            company_block = [
+                Paragraph(clean(company_name), company_title_style),
+                Spacer(1, 5),
+                Paragraph(f"<font color='#475569'>{clean(company_rif)}</font>", body_style),
+                Paragraph(f"<font color='#475569'>{clean(company_address)}</font>", small_style),
+                Paragraph(f"<font color='#475569'>{clean(company_phone)}</font>", small_style),
+            ]
+            left_header = [[logo, company_block]] if logo else [[company_block]]
+            left_widths = [0.82 * inch, 3.2 * inch] if logo else [4 * inch]
+            left_table = Table(left_header, colWidths=left_widths)
+            left_table.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 2),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+            ]))
+
+            qr_flow = None
+            try:
+                qr_link = (getattr(self, 'store_url', '') or db.get_config('store_url', '')).strip()
+                if qr_link:
+                    qr_payload = qr_link
+                else:
+                    qr_total_bs = float(invoice_data.get('total', 0.0) or 0.0) * exchange_rate
+                    qr_payload = (
+                        f"FACTURA:{number}|CONTROL:{control_number}|FECHA:{issue_day}|"
+                        f"RIF:{company_rif}|TOTAL_BS:{qr_total_bs:.2f}"
+                    )
+                qr_flow = qr_flowable(qr_payload, 0.72 * inch)
+            except Exception:
+                qr_flow = None
+
+            invoice_box_rows = [
+                [Paragraph('<font color="#7C4D9A"><b>FACTURA</b></font>', invoice_badge_style)],
+                [Paragraph(f"<b>N° {clean(number)}</b>", invoice_number_style)],
+                [Paragraph(f"N° de control: <b>{clean(control_number)}</b>", invoice_meta_style)],
+                [Paragraph(f"Emisión: {clean(issue_day)} | Hora: {clean(issue_date.split()[-1] if issue_date else '')}", invoice_meta_style)],
+                [Paragraph(f"Asignación / período: <b>{clean(assignment_date)}</b>", invoice_meta_style)],
+            ]
+            if qr_flow is not None:
+                qr_cell = Table([[qr_flow]], colWidths=[1.1 * inch])
+                qr_cell.setStyle(TableStyle([('ALIGN', (0, 0), (0, 0), 'CENTER'), ('VALIGN', (0, 0), (0, 0), 'MIDDLE')]))
+                invoice_box_rows.append([qr_cell])
+            invoice_box = Table(invoice_box_rows, colWidths=[3.0 * inch])
+            invoice_box_style = [
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F4F5F7')),
+                ('BOX', (0, 0), (-1, -1), 0.8, colors.HexColor('#D4D9E1')),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('TOPPADDING', (0, 0), (0, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (0, 0), 5),
+                ('TOPPADDING', (0, 1), (0, 1), 2),
+                ('BOTTOMPADDING', (0, 1), (0, 1), 9),
+                ('TOPPADDING', (0, 2), (0, 4), 4),
+                ('BOTTOMPADDING', (0, 2), (0, 4), 4),
+            ]
+            if qr_flow is not None:
+                invoice_box_style.append(('ALIGN', (0, -1), (0, -1), 'CENTER'))
+                invoice_box_style.append(('TOPPADDING', (0, -1), (0, -1), 8))
+                invoice_box_style.append(('BOTTOMPADDING', (0, -1), (0, -1), 12))
+            invoice_box.setStyle(TableStyle(invoice_box_style))
             header_table = Table([[left_table, invoice_box]], colWidths=[4.0 * inch, 3.0 * inch])
-            header_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+            header_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('BOTTOMPADDING', (0, 0), (-1, -1), 10)]))
             story.extend([header_table, Spacer(1, 10)])
 
             client_data = [[label_value('Nombre / razón social', invoice_data.get('client')), label_value('Cédula / RIF', format_ci_rif(client.get('rif_ci'))), label_value('Teléfono', client.get('phone'))], [label_value('Domicilio fiscal', ' '.join(filter(None, [client.get('address'), client.get('city'), client.get('state')]))), label_value('Código de cliente / contrato', invoice_data.get('client_code') or client.get('id')), label_value('Condición de pago', 'Crédito' if invoice_data.get('is_credit') else 'Contado')]]
             client_table = Table(client_data, colWidths=[2.4 * inch] * 3)
-            client_table.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8FAFC')), ('BOX', (0, 0), (-1, -1), 0.6, colors.HexColor('#CBD5E1')), ('INNERGRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#E2E8F0')), ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7), ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6)]))
+            client_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8FAFC')),
+                ('BOX', (0, 0), (-1, -1), 0.6, colors.HexColor('#CBD5E1')),
+                ('INNERGRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#E2E8F0')),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 7),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
+            ]))
             story.extend([client_table, Spacer(1, 10)])
 
             item_rows = [[Paragraph('CANT.', table_header_style), Paragraph('CÓDIGO', table_header_style), Paragraph('DESCRIPCIÓN', table_header_style), Paragraph('P. UNIT.<br/>Bs.', table_header_style), Paragraph('P. UNIT.<br/>USD', table_header_style), Paragraph('TOTAL<br/>Bs. / USD', table_header_style)]]
@@ -3396,7 +3519,18 @@ class BillingSystem(ctk.CTkToplevel):
                 item_rows.append([cell(item.get('quantity', 0), table_number_style), cell(item.get('code') or product.get('code')), Paragraph(clean(item.get('product')), table_cell_style), cell(money(unit_usd * exchange_rate), table_number_style), cell(money(unit_usd, '$ '), table_number_style), total_cell])
 
             items_table = Table(item_rows, colWidths=[0.5 * inch, 0.75 * inch, 2.25 * inch, 1.05 * inch, 1.0 * inch, 1.45 * inch], repeatRows=1)
-            item_style = TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#334155')), ('TEXTCOLOR', (0, 0), (-1, 0), colors.white), ('ALIGN', (0, 0), (-1, -1), 'RIGHT'), ('ALIGN', (0, 0), (2, -1), 'LEFT'), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#CBD5E1')), ('TOPPADDING', (0, 0), (-1, 0), 7), ('BOTTOMPADDING', (0, 0), (-1, 0), 7), ('TOPPADDING', (0, 1), (-1, -1), 6), ('BOTTOMPADDING', (0, 1), (-1, -1), 6)])
+            item_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F2937')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+                ('ALIGN', (0, 0), (2, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#CBD5E1')),
+                ('TOPPADDING', (0, 0), (-1, 0), 7),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 7),
+                ('TOPPADDING', (0, 1), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+            ])
             for row_index in range(1, len(item_rows)):
                 if row_index % 2 == 0:
                     item_style.add('BACKGROUND', (0, row_index), (-1, row_index), colors.HexColor('#F8FAFC'))
@@ -3410,7 +3544,14 @@ class BillingSystem(ctk.CTkToplevel):
             else:
                 payment_rows.append([cell(invoice_data.get('payment_method')), cell(issue_day)])
             payment_table = Table(payment_rows, colWidths=[2.1 * inch, 2.25 * inch])
-            payment_table.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#64748B')), ('TEXTCOLOR', (0, 0), (-1, 0), colors.white), ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#CBD5E1')), ('FONTSIZE', (0, 1), (-1, -1), 8), ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5)]))
+            payment_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#334155')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#CBD5E1')),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('TOPPADDING', (0, 0), (-1, -1), 5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ]))
             subtotal = float(invoice_data.get('subtotal', 0.0) or 0.0)
             tax = float(invoice_data.get('tax', 0.0) or 0.0)
             total = float(invoice_data.get('total', 0.0) or 0.0)
@@ -3442,22 +3583,47 @@ class BillingSystem(ctk.CTkToplevel):
 
             doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
 
+            if preview:
+                dlg = PDFPreviewDialog(self, filepath, final_path, label=f"Factura N° {number}")
+                try:
+                    self.wait_window(dlg)
+                except tk.TclError:
+                    pass
+                if dlg.result != "save":
+                    if temp_dir:
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                    return None
+                os.makedirs(os.path.dirname(final_path), exist_ok=True)
+                shutil.copyfile(filepath, final_path)
+                if temp_dir:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                try:
+                    open_path(final_path)
+                except Exception:
+                    pass
+                ModernMessageBox.showinfo("PDF generado", f"Factura exportada correctamente en:\n{final_path}")
+                return final_path
+
             try:
-                if os.name == 'nt':
-                    os.startfile(filepath)
+                open_path(filepath)
             except Exception:
                 pass
 
             ModernMessageBox.showinfo("PDF generado", f"Factura exportada correctamente en:\n{filepath}")
             return filepath
         except Exception as e:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
             ModernMessageBox.showerror("Error al generar PDF", f"No se pudo generar el archivo PDF: {e}")
             return None
 
-    def generate_pdf_delivery_note(self, invoice_data=None):
+    def generate_pdf_delivery_note(self, invoice_data=None, preview: bool = True):
         """Generar un Comprobante / Nota de Entrega informal (sin elementos fiscales).
         Excluye N° de control, desgloses del SENIAT, RIF y leyendas obligatorias.
-        La tabla de productos y el total se muestran únicamente en USD."""
+        La tabla de productos y el total se muestran únicamente en USD.
+
+        Con ``preview=True`` se ofrece vista previa antes de guardar el archivo.
+        """
         if invoice_data is None:
             invoice_data = self.get_selected_invoice_data()
 
@@ -3468,6 +3634,7 @@ class BillingSystem(ctk.CTkToplevel):
             ModernMessageBox.showwarning("Atención", "Por favor, seleccione una factura para generar la Nota de Entrega.")
             return None
 
+        temp_dir = None
         try:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             export_dir = os.path.join(base_dir, "NotasDeEntrega")
@@ -3475,7 +3642,12 @@ class BillingSystem(ctk.CTkToplevel):
 
             number = invoice_data.get('number', 'sin_numero')
             filename = f"NotaDeEntrega_{number}.pdf"
-            filepath = os.path.join(export_dir, os.path.basename(filename))
+            final_path = os.path.join(export_dir, os.path.basename(filename))
+            if preview:
+                temp_dir = tempfile.mkdtemp(prefix="as_nota_")
+                filepath = os.path.join(temp_dir, os.path.basename(filename))
+            else:
+                filepath = final_path
 
             doc = SimpleDocTemplate(
                 filepath,
@@ -3503,6 +3675,10 @@ class BillingSystem(ctk.CTkToplevel):
             total_style = ParagraphStyle('NDTotal', parent=body_style, fontName='Helvetica-Bold', fontSize=11, leading=13, textColor=colors.HexColor('#0F172A'))
             section_style = ParagraphStyle('NDSection', parent=body_style, fontName='Helvetica-Bold', fontSize=9, leading=11, textColor=colors.HexColor('#475569'))
             signature_style = ParagraphStyle('NDSignature', parent=body_style, fontSize=8.6, leading=10, alignment=1)
+            brand_primary = colors.HexColor('#1F2937')
+            brand_soft = colors.HexColor('#F8FAFC')
+            brand_dark = colors.HexColor('#0F172A')
+            brand_muted = colors.HexColor('#64748B')
 
             def cell(value, style=table_cell_style):
                 return Paragraph(clean(value), style)
@@ -3541,12 +3717,33 @@ class BillingSystem(ctk.CTkToplevel):
             left_table = Table(left_header, colWidths=left_widths)
             left_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
 
-            doc_box = Table([
+            qr_flow = None
+            try:
+                qr_link = (getattr(self, 'store_url', '') or db.get_config('store_url', '')).strip()
+                if qr_link:
+                    qr_payload = qr_link
+                else:
+                    qr_payload = f"NOTA_ENTREGA:{number}|CLIENTE:{invoice_data.get('client')}|FECHA:{issue_day}"
+                qr_flow = qr_flowable(qr_payload, 0.68 * inch)
+            except Exception:
+                qr_flow = None
+
+            doc_box_rows = [
                 [Paragraph('COMPROBANTE DE ENTREGA', title_style)],
                 [Paragraph(f"<b>N° {clean(number)}</b>", header_style)],
                 [Paragraph(f"Fecha: {clean(issue_day)}", header_style)],
-            ], colWidths=[3.0 * inch])
-            doc_box.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')), ('BOX', (0, 0), (-1, -1), 0.8, colors.HexColor('#CBD5E1')), ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10), ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4)]))
+            ]
+            if qr_flow is not None:
+                qr_cell = Table([[qr_flow]], colWidths=[1.0 * inch])
+                qr_cell.setStyle(TableStyle([('ALIGN', (0, 0), (0, 0), 'CENTER'), ('VALIGN', (0, 0), (0, 0), 'MIDDLE')]))
+                doc_box_rows.append([qr_cell])
+            doc_box = Table(doc_box_rows, colWidths=[3.0 * inch])
+            doc_box_style = [('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')), ('BOX', (0, 0), (-1, -1), 0.8, colors.HexColor('#CBD5E1')), ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10), ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]
+            if qr_flow is not None:
+                doc_box_style.append(('ALIGN', (0, -1), (0, -1), 'CENTER'))
+                doc_box_style.append(('TOPPADDING', (0, -1), (0, -1), 8))
+                doc_box_style.append(('BOTTOMPADDING', (0, -1), (0, -1), 12))
+            doc_box.setStyle(TableStyle(doc_box_style))
             header_table = Table([[left_table, doc_box]], colWidths=[4.0 * inch, 3.0 * inch])
             header_table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
             story.extend([header_table, Spacer(1, 10)])
@@ -3613,16 +3810,183 @@ class BillingSystem(ctk.CTkToplevel):
 
             doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
 
+            if preview:
+                dlg = PDFPreviewDialog(self, filepath, final_path, label=f"Nota de Entrega N° {number}")
+                try:
+                    self.wait_window(dlg)
+                except tk.TclError:
+                    pass
+                if dlg.result != "save":
+                    if temp_dir:
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                    return None
+                os.makedirs(os.path.dirname(final_path), exist_ok=True)
+                shutil.copyfile(filepath, final_path)
+                if temp_dir:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                try:
+                    open_path(final_path)
+                except Exception:
+                    pass
+                ModernMessageBox.showinfo("Nota de Entrega", f"Nota de Entrega generada correctamente en:\n{final_path}")
+                return final_path
+
             try:
-                if os.name == 'nt':
-                    os.startfile(filepath)
+                open_path(filepath)
             except Exception:
                 pass
 
             ModernMessageBox.showinfo("Nota de Entrega", f"Nota de Entrega generada correctamente en:\n{filepath}")
             return filepath
         except Exception as e:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
             ModernMessageBox.showerror("Error al generar Nota de Entrega", f"No se pudo generar el archivo PDF: {e}")
+            return None
+
+    def _get_selected_products(self):
+        """Devuelve los productos seleccionados en la tabla de inventario."""
+        try:
+            selection = self.inventory_tree.selection()
+        except (AttributeError, tk.TclError):
+            return []
+        ids = set()
+        for item in selection:
+            try:
+                ids.add(int(self.inventory_tree.item(item)["values"][0]))
+            except (TypeError, ValueError, tk.TclError):
+                continue
+        return [p for p in getattr(self, "products", []) if p.get("id") in ids]
+
+    def _build_product_label(self, product, cell_w, cell_h):
+        """Construye la etiqueta (QR + datos) de un producto como flowable."""
+        code = product.get('code') or product.get('id') or ''
+        name = product.get('name') or ''
+        try:
+            price = float(product.get('price', 0) or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        payload = f"{code}|{name}|{price:.2f}"
+
+        qr_image = None
+        try:
+            qr_image = qr_flowable(payload, 0.62 * inch)
+        except Exception:
+            qr_image = None
+
+        text_style = ParagraphStyle(
+            'LabelText', fontName='Helvetica', fontSize=7.5, leading=9,
+            textColor=colors.HexColor('#1F2937')
+        )
+        info = Paragraph(
+            f"<b>{escape(str(name))}</b><br/>"
+            f"<font size=7 color='#475569'>{escape(str(code))}</font><br/>"
+            f"<b>$ {price:,.2f}</b>",
+            text_style
+        )
+        label = Table(
+            [[qr_image, info]],
+            colWidths=[0.78 * inch, max(cell_w - 0.86 * inch, 0.6 * inch)],
+            rowHeights=[min(cell_h - 0.14 * inch, 0.72 * inch)],
+        )
+        label.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 2),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+            ('TOPPADDING', (0, 0), (-1, -1), 2),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ]))
+        return label
+
+    def generate_product_labels_pdf(self, products=None) -> Optional[str]:
+        """Genera un PDF de etiquetas con código QR para los productos.
+
+        Usa la selección de la tabla de inventario si existe; de lo contrario,
+        genera etiquetas para todos los productos. Muestra vista previa.
+        """
+        if products is None:
+            products = self._get_selected_products() or list(getattr(self, 'products', []))
+        if not products:
+            ModernMessageBox.showwarning("Sin productos", "No hay productos para generar etiquetas.")
+            return None
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        out_dir = os.path.join(base_dir, config.AppConfig.LABELS_DIR)
+        os.makedirs(out_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        final_path = os.path.join(out_dir, f"Etiquetas_QR_{timestamp}.pdf")
+
+        temp_dir = tempfile.mkdtemp(prefix="as_etiquetas_")
+        try:
+            filepath = os.path.join(temp_dir, os.path.basename(final_path))
+
+            cols = max(1, int(config.AppConfig.LABELS_PER_ROW))
+            rows = max(1, int(config.AppConfig.LABELS_PER_COL))
+            per_page = cols * rows
+            content_width = letter[0] - 48
+            cell_w = content_width / cols
+            cell_h = 0.95 * inch
+
+            title_style = ParagraphStyle('LabelsTitle', fontName='Helvetica-Bold', fontSize=15, textColor=colors.HexColor('#0F172A'))
+            subtitle_style = ParagraphStyle('LabelsSub', fontName='Helvetica', fontSize=8, textColor=colors.HexColor('#64748B'), alignment=2)
+
+            elements = []
+            for page_start in range(0, len(products), per_page):
+                chunk = products[page_start:page_start + per_page]
+                header = Table(
+                    [[Paragraph('Etiquetas de productos', title_style),
+                      Paragraph(datetime.now().strftime('%d/%m/%Y %H:%M'), subtitle_style)]],
+                    colWidths=[content_width * 0.6, content_width * 0.4],
+                )
+                header.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'BOTTOM'), ('BOTTOMPADDING', (0, 0), (-1, -1), 8)]))
+                elements.extend([header, Spacer(1, 6)])
+
+                grid_rows = []
+                for r in range(rows):
+                    row_cells = []
+                    for c in range(cols):
+                        i = r * cols + c
+                        if i < len(chunk):
+                            row_cells.append(self._build_product_label(chunk[i], cell_w, cell_h))
+                        else:
+                            row_cells.append('')
+                    grid_rows.append(row_cells)
+                grid = Table(grid_rows, colWidths=[cell_w] * cols, rowHeights=[cell_h] * rows)
+                grid.setStyle(TableStyle([
+                    ('BOX', (0, 0), (-1, -1), 0.6, colors.HexColor('#CBD5E1')),
+                    ('INNERGRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#E2E8F0')),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                    ('TOPPADDING', (0, 0), (-1, -1), 6),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ]))
+                elements.append(grid)
+                if page_start + per_page < len(products):
+                    elements.append(PageBreak())
+
+            doc = SimpleDocTemplate(filepath, pagesize=letter, rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
+            doc.build(elements)
+
+            dlg = PDFPreviewDialog(self, filepath, final_path, label=f"Etiquetas QR ({len(products)} producto(s))")
+            try:
+                self.wait_window(dlg)
+            except tk.TclError:
+                pass
+            if dlg.result != "save":
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return None
+            shutil.copyfile(filepath, final_path)
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            try:
+                open_path(final_path)
+            except Exception:
+                pass
+            ModernMessageBox.showinfo("Etiquetas generadas", f"{len(products)} etiquetas exportadas en:\n{final_path}")
+            return final_path
+        except Exception as e:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            ModernMessageBox.showerror("Error al generar etiquetas", f"No se pudieron generar las etiquetas: {e}")
             return None
 
     def create_professional_pdf(self, invoice, filepath):
@@ -3768,7 +4132,7 @@ class BillingSystem(ctk.CTkToplevel):
         doc.build(elements)
 
 
-    def view_invoice_detail(self):
+    def view_invoice_detail(self) -> None:
         """Ver detalle de factura seleccionada (estrictamente de una en una)"""
         selection = self.invoices_tree.selection()
         if not selection:
@@ -3795,28 +4159,50 @@ class BillingSystem(ctk.CTkToplevel):
         # Mostrar diálogo con detalles
         dialog = ctk.CTkToplevel(self)
         dialog.title(f"Detalle Factura #{invoice_number}")
-        dialog.geometry("800x800")
+        dialog.configure(fg_color="#F3F5F8")
+        screen_w = dialog.winfo_screenwidth()
+        screen_h = dialog.winfo_screenheight()
+        dialog.geometry(f"{min(980, max(560, int(screen_w * 0.82)))}x{min(900, max(440, int(screen_h * 0.82)))}")
+        dialog.minsize(560, 440)
         dialog.transient(self)
         dialog.grab_set()
         fade_in_window(dialog)
-        
+
+        canvas = tk.Canvas(dialog, highlightthickness=0, bg="#F3F5F8")
+        canvas.pack(side="left", fill="both", expand=True)
+        v_scroll = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+        v_scroll.pack(side="right", fill="y")
+        canvas.configure(yscrollcommand=v_scroll.set)
+
+        scrollable = ctk.CTkFrame(canvas)
+        scrollable_window = canvas.create_window((0, 0), window=scrollable, anchor="nw")
+        canvas.bind(
+            "<Configure>",
+            lambda event: canvas.itemconfigure(scrollable_window, width=event.width),
+        )
+        scrollable.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+
         # Contenido principal
-        main_frame = ctk.CTkFrame(dialog)
+        main_frame = ctk.CTkFrame(scrollable)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
+
         # Información de la factura
-        info_frame = ctk.CTkFrame(main_frame)
+        info_frame = ctk.CTkFrame(main_frame, fg_color="#FFFFFF", corner_radius=12)
         info_frame.pack(fill="x", pady=(0, 10))
-        
+
         ctk.CTkLabel(
             info_frame,
             text=f"FACTURA #{invoice_number:06d}",
-            font=("Segoe UI", 16, "bold")
-        ).pack(pady=5)
-        
+            font=("Segoe UI", 22, "bold"),
+            text_color="#111827",
+            anchor="center"
+        ).pack(fill="x", pady=(20, 12))
+
         info_grid = ctk.CTkFrame(info_frame, fg_color="transparent")
-        info_grid.pack(pady=10)
-        
+        info_grid.pack(pady=10, fill="x")
+        info_grid.grid_columnconfigure(0, weight=1)
+        info_grid.grid_columnconfigure(1, weight=2)
+
         inv_rate = invoice.get('exchange_rate') or getattr(self, 'exchange_rate', 1)
         labels = [
             ("Fecha:", invoice['date']),
@@ -3825,26 +4211,26 @@ class BillingSystem(ctk.CTkToplevel):
             ("Estado:", invoice['status']),
             ("Tasa aplicada:", f"{float(inv_rate):,.2f} VES/USD")
         ]
-        
+
         for i, (label, value) in enumerate(labels):
-            ctk.CTkLabel(info_grid, text=label, font=("Segoe UI", 11, "bold")).grid(row=i, column=0, sticky="w", padx=10, pady=2)
-            ctk.CTkLabel(info_grid, text=value).grid(row=i, column=1, sticky="w", padx=10, pady=2)
-        
+            ctk.CTkLabel(info_grid, text=label, font=("Segoe UI", 11, "bold"), text_color="#374151", anchor="e").grid(row=i, column=0, sticky="e", padx=(18, 10), pady=3)
+            ctk.CTkLabel(info_grid, text=value, font=("Segoe UI", 11), text_color="#111827", anchor="w").grid(row=i, column=1, sticky="w", padx=(0, 18), pady=3)
+
         # Tabla de items
-        tree_frame = ctk.CTkFrame(main_frame)
+        tree_frame = ctk.CTkFrame(main_frame, fg_color="#FFFFFF", corner_radius=12)
         tree_frame.pack(fill="both", expand=True, pady=(0, 10))
-        
+
         columns = ("Producto", "Cantidad", "Precio Unitario", "Total")
         tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=10)
-        
+
         for col in columns:
             tree.heading(col, text=col)
             tree.column(col, width=150, anchor="center")
-        
+
         tree.column("Producto", width=300, anchor="w")
         tree.column("Precio Unitario", anchor="e")
         tree.column("Total", anchor="e")
-        
+
         for item in invoice["items"]:
             tree.insert("", "end", values=(
                 item["product"],
@@ -3852,29 +4238,31 @@ class BillingSystem(ctk.CTkToplevel):
                 f"${item['price']:.2f}",
                 f"${item['total']:.2f}"
             ))
-        
+
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=vsb.set)
-        
+
         tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
-        
+
         # Totales
-        totals_frame = ctk.CTkFrame(main_frame)
-        totals_frame.pack(fill="x")
-        
-        ctk.CTkLabel(totals_frame, text="Subtotal:", font=("Segoe UI", 12)).pack(anchor="e", padx=20)
-        ctk.CTkLabel(totals_frame, text=f"${invoice['subtotal']:.2f}", font=("Segoe UI", 12)).pack(anchor="e", padx=20)
-        
-        ctk.CTkLabel(totals_frame, text="IVA:", font=("Segoe UI", 12)).pack(anchor="e", padx=20)
-        ctk.CTkLabel(totals_frame, text=f"${invoice['tax']:.2f}", font=("Segoe UI", 12)).pack(anchor="e", padx=20)
-        
-        ctk.CTkLabel(totals_frame, text="TOTAL:", font=("Segoe UI", 14, "bold")).pack(anchor="e", padx=20)
-        ctk.CTkLabel(totals_frame, text=f"${invoice['total']:.2f}", font=("Segoe UI", 14, "bold")).pack(anchor="e", padx=20)
+        totals_frame = ctk.CTkFrame(main_frame, fg_color="#FFFFFF", corner_radius=12)
+        totals_frame.pack(fill="x", pady=(0, 10))
+        totals_frame.grid_columnconfigure(0, weight=1)
+        totals_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(totals_frame, text="Subtotal:", font=("Segoe UI", 12), text_color="#374151", anchor="e").grid(row=0, column=0, sticky="e", padx=20, pady=(10, 0))
+        ctk.CTkLabel(totals_frame, text=f"${invoice['subtotal']:.2f}", font=("Segoe UI", 12), text_color="#111827", anchor="e").grid(row=0, column=1, sticky="e", padx=20, pady=(10, 0))
+
+        ctk.CTkLabel(totals_frame, text="IVA:", font=("Segoe UI", 12), text_color="#374151", anchor="e").grid(row=1, column=0, sticky="e", padx=20)
+        ctk.CTkLabel(totals_frame, text=f"${invoice['tax']:.2f}", font=("Segoe UI", 12), text_color="#111827", anchor="e").grid(row=1, column=1, sticky="e", padx=20)
+
+        ctk.CTkLabel(totals_frame, text="TOTAL:", font=("Segoe UI", 15, "bold"), text_color="#111827", anchor="e").grid(row=2, column=0, sticky="e", padx=20, pady=(12, 0))
+        ctk.CTkLabel(totals_frame, text=f"${invoice['total']:.2f}", font=("Segoe UI", 15, "bold"), text_color="#111827", anchor="e").grid(row=2, column=1, sticky="e", padx=20, pady=(12, 0))
 
         inv_rate = invoice.get('exchange_rate') or getattr(self, 'exchange_rate', 1)
-        ctk.CTkLabel(totals_frame, text=f"TOTAL EN Bs. (tasa {float(inv_rate):,.2f}):", font=("Segoe UI", 11, "bold")).pack(anchor="e", padx=20, pady=(6, 0))
-        ctk.CTkLabel(totals_frame, text=f"Bs.{float(invoice['total']) * float(inv_rate):,.2f}", font=("Segoe UI", 11, "bold")).pack(anchor="e", padx=20)
+        ctk.CTkLabel(totals_frame, text=f"TOTAL EN Bs. (tasa {float(inv_rate):,.2f}):", font=("Segoe UI", 11, "bold"), text_color="#0F172A", anchor="e").grid(row=3, column=0, sticky="e", padx=20, pady=(10, 10))
+        ctk.CTkLabel(totals_frame, text=f"Bs.{float(invoice['total']) * float(inv_rate):,.2f}", font=("Segoe UI", 11, "bold"), text_color="#0F172A", anchor="e").grid(row=3, column=1, sticky="e", padx=20, pady=(10, 10))
 
         # Notas adicionales de la factura
         if invoice.get("cancel_note"):
@@ -3884,7 +4272,7 @@ class BillingSystem(ctk.CTkToplevel):
             cancel_box.insert("1.0", invoice.get("cancel_note"))
             cancel_box.configure(state="disabled")
 
-    def mark_invoice_as_paid(self):
+    def mark_invoice_as_paid(self) -> None:
         """Marcar factura seleccionada como pagada y registrar pago en la base de datos (estrictamente de una en una)"""
         selection = self.invoices_tree.selection()
         if not selection:
@@ -3960,7 +4348,7 @@ class BillingSystem(ctk.CTkToplevel):
         ctk.CTkButton(dialog, text="Confirmar Pago", command=confirm_payment, fg_color="#059669", hover_color="#047857", corner_radius=8).pack(pady=12)
         ctk.CTkButton(dialog, text="Cancelar", command=dialog.destroy, fg_color="#64748B", hover_color="#475569", corner_radius=8).pack()
 
-    def cancel_invoice(self):
+    def cancel_invoice(self) -> None:
         """Cancelar factura seleccionada (estrictamente de una en una)"""
         if not self._require_admin("cancelar facturas"):
             return
@@ -4010,7 +4398,7 @@ class BillingSystem(ctk.CTkToplevel):
                     ModernMessageBox.showinfo("Éxito", f"Factura #{invoice_number} cancelada correctamente")
                     break
 
-    def delete_invoice(self):
+    def delete_invoice(self) -> None:
         """Eliminar factura(s) seleccionada(s) permitiendo selección múltiple"""
         if not self._require_admin("eliminar facturas"):
             return
@@ -4051,7 +4439,7 @@ class BillingSystem(ctk.CTkToplevel):
             else:
                 ModernMessageBox.showinfo("Éxito", f"{len(nums_to_delete)} facturas eliminadas correctamente")
 
-    def apply_invoice_filters(self):
+    def apply_invoice_filters(self) -> None:
         """Aplicar filtros a la lista de facturas"""
         date_from = self.date_from_entry.get()
         date_to = self.date_to_entry.get()
@@ -4105,7 +4493,7 @@ class BillingSystem(ctk.CTkToplevel):
                 invoice["payment_method"]
             ))
 
-    def clear_invoice_filters(self):
+    def clear_invoice_filters(self) -> None:
         """Limpiar filtros de facturas"""
         self.date_from_entry.delete(0, "end")
         self.date_to_entry.delete(0, "end")
@@ -4116,8 +4504,139 @@ class BillingSystem(ctk.CTkToplevel):
             pass
         self.refresh_invoices()
 
-    def export_invoices_excel(self):
-        """Exportar facturas a archivos Excel organizados por fecha."""
+    def get_filtered_invoices(self):
+        """Devuelve las facturas que cumplen los filtros de fecha y estado activos."""
+        filtered = list(getattr(self, "invoices", []))
+        date_from = self.date_from_entry.get().strip() if hasattr(self, "date_from_entry") else ""
+        date_to = self.date_to_entry.get().strip() if hasattr(self, "date_to_entry") else ""
+
+        if date_from:
+            try:
+                day, month, year = map(int, date_from.split('/'))
+                from_date = datetime(year, month, day)
+                filtered = [
+                    inv for inv in filtered
+                    if datetime.strptime(inv['date'].split()[0], '%d/%m/%Y') >= from_date
+                ]
+            except (ValueError, IndexError, KeyError):
+                pass
+        if date_to:
+            try:
+                day, month, year = map(int, date_to.split('/'))
+                to_date = datetime(year, month, day)
+                filtered = [
+                    inv for inv in filtered
+                    if datetime.strptime(inv['date'].split()[0], '%d/%m/%Y') <= to_date
+                ]
+            except (ValueError, IndexError, KeyError):
+                pass
+        try:
+            status = self.status_filter_var.get()
+            if status and status != "Todos":
+                filtered = [inv for inv in filtered if inv.get("status") == status]
+        except (tk.TclError, AttributeError):
+            pass
+        return filtered
+
+    def describe_invoice_filters(self) -> str:
+        """Texto legible de los filtros de factura activos."""
+        parts = []
+        date_from = self.date_from_entry.get().strip() if hasattr(self, "date_from_entry") else ""
+        date_to = self.date_to_entry.get().strip() if hasattr(self, "date_to_entry") else ""
+        try:
+            status = self.status_filter_var.get()
+        except (tk.TclError, AttributeError):
+            status = "Todos"
+        if date_from:
+            parts.append(f"desde {date_from}")
+        if date_to:
+            parts.append(f"hasta {date_to}")
+        if status and status != "Todos":
+            parts.append(f"estado {status}")
+        return ", ".join(parts) if parts else "sin filtros"
+
+    def export_filtered_invoices_pdf(self) -> None:
+        """Exportar a PDF un listado consolidado de las facturas filtradas."""
+        filtered = self.get_filtered_invoices()
+        if not filtered:
+            ModernMessageBox.showwarning("Sin Facturas", "No hay facturas que coincidan con los filtros para exportar.")
+            return
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        export_dir = os.path.join(base_dir, config.AppConfig.EXPORT_DIR)
+        os.makedirs(export_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        final_path = os.path.join(export_dir, f"Listado_Facturas_{timestamp}.pdf")
+
+        temp_dir = tempfile.mkdtemp(prefix="as_listado_")
+        try:
+            filepath = os.path.join(temp_dir, os.path.basename(final_path))
+            styles = getSampleStyleSheet()
+            body = ParagraphStyle('ListBody', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor('#1F2937'))
+            head = ParagraphStyle('ListHead', parent=body, fontName='Helvetica-Bold', fontSize=8, textColor=colors.white, alignment=1)
+            title = ParagraphStyle('ListTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=16, textColor=colors.HexColor('#0F172A'))
+            sub = ParagraphStyle('ListSub', parent=body, fontSize=8.5, textColor=colors.HexColor('#475569'))
+
+            rows = [[Paragraph(h, head) for h in ("N°", "FECHA", "CLIENTE", "ESTADO", "SUBTOTAL", "IVA", "TOTAL")]]
+            total_sum = 0.0
+            for inv in filtered:
+                total_sum += float(inv.get("total", 0) or 0)
+                rows.append([
+                    Paragraph(escape(str(inv.get("number", ""))), body),
+                    Paragraph(escape(str(inv.get("date", ""))), body),
+                    Paragraph(escape(str(inv.get("client", ""))), body),
+                    Paragraph(escape(str(inv.get("status", ""))), body),
+                    Paragraph(f"${float(inv.get('subtotal', 0) or 0):,.2f}", body),
+                    Paragraph(f"${float(inv.get('tax', 0) or 0):,.2f}", body),
+                    Paragraph(f"${float(inv.get('total', 0) or 0):,.2f}", body),
+                ])
+            rows.append([
+                Paragraph('', body), Paragraph('', body), Paragraph('', body),
+                Paragraph('<b>TOTAL</b>', body), Paragraph('', body), Paragraph('', body),
+                Paragraph(f"<b>${total_sum:,.2f}</b>", body),
+            ])
+            table = Table(rows, colWidths=[0.6 * inch, 0.9 * inch, 2.6 * inch, 0.8 * inch, 0.9 * inch, 0.7 * inch, 1.0 * inch], repeatRows=1)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#334155')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#CBD5E1')),
+                ('ALIGN', (4, 1), (-1, -1), 'RIGHT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#F1F5F9')),
+                ('TOPPADDING', (0, 0), (-1, -1), 4),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ]))
+
+            doc = SimpleDocTemplate(filepath, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=36)
+            elements = [
+                Paragraph('Listado de Facturas', title),
+                Paragraph(f"Filtros aplicados: {escape(self.describe_invoice_filters())} — {len(filtered)} registro(s)", sub),
+                Spacer(1, 12),
+                table,
+            ]
+            doc.build(elements)
+
+            dlg = PDFPreviewDialog(self, filepath, final_path, label=f"Listado de Facturas ({len(filtered)})")
+            try:
+                self.wait_window(dlg)
+            except tk.TclError:
+                pass
+            if dlg.result != "save":
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return
+            shutil.copyfile(filepath, final_path)
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            try:
+                open_path(final_path)
+            except Exception:
+                pass
+            ModernMessageBox.showinfo("Exportado", f"{len(filtered)} facturas exportadas en:\n{final_path}")
+        except Exception as e:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            ModernMessageBox.showerror("Error", f"No se pudo exportar el listado: {e}")
+
+    def export_invoices_excel(self) -> None:
+        """Exportar a Excel las facturas que cumplen los filtros activos."""
         if Workbook is None:
             ModernMessageBox.showerror(
                 "Error",
@@ -4125,8 +4644,9 @@ class BillingSystem(ctk.CTkToplevel):
             )
             return
 
-        if not self.invoices:
-            ModernMessageBox.showwarning("Sin Facturas", "No hay facturas para exportar.")
+        filtered = self.get_filtered_invoices()
+        if not filtered:
+            ModernMessageBox.showwarning("Sin Facturas", "No hay facturas que coincidan con los filtros para exportar.")
             return
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -4134,7 +4654,7 @@ class BillingSystem(ctk.CTkToplevel):
         os.makedirs(excel_root, exist_ok=True)
 
         exported_files = []
-        for inv in self.invoices:
+        for inv in filtered:
             date_part = str(inv.get("date", "")).split()[0]
             if date_part:
                 try:
@@ -4201,45 +4721,251 @@ class BillingSystem(ctk.CTkToplevel):
         if exported_files:
             ModernMessageBox.showinfo(
                 "Exportado",
-                f"{len(exported_files)} facturas exportadas en: {excel_root}"
+                f"{len(exported_files)} facturas exportadas ({self.describe_invoice_filters()}) en: {excel_root}"
             )
         else:
             ModernMessageBox.showwarning("Exportación vacía", "No se exportaron facturas.")
 
-    def open_excel_export_folder(self):
+    def export_selected_invoices_excel(self) -> None:
+        """Exportar facturas seleccionadas a un archivo Excel consolidado."""
+        if Workbook is None:
+            ModernMessageBox.showerror(
+                "Error",
+                "La biblioteca openpyxl no está instalada. Instale openpyxl y vuelva a intentar."
+            )
+            return
+
+        selection = self.invoices_tree.selection()
+        if selection:
+            numbers = set()
+            for item in selection:
+                try:
+                    numbers.add(str(self.invoices_tree.item(item)["values"][0]))
+                except Exception:
+                    continue
+            selected = [inv for inv in self.invoices if str(inv.get("number")) in numbers]
+        else:
+            selected = list(self.invoices)
+
+        if not selected:
+            ModernMessageBox.showwarning("Sin Selección", "No hay facturas seleccionadas para exportar.")
+            return
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        excel_root = os.path.join(base_dir, "Excel")
+        os.makedirs(excel_root, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filepath = os.path.join(excel_root, f"Lote_Facturas_{timestamp}.xlsx")
+
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Consolidado"
+            ws.append(["N°", "Fecha", "Cliente", "Estado", "Método Pago",
+                       "Crédito", "Saldo", "Subtotal", "IVA", "Total"])
+            for inv in selected:
+                ws.append([
+                    inv.get("number", ""), inv.get("date", ""), inv.get("client", ""),
+                    inv.get("status", ""), inv.get("payment_method", ""),
+                    "Sí" if inv.get("is_credit") else "No", inv.get("balance", 0.0),
+                    inv.get("subtotal", 0.0), inv.get("tax", 0.0), inv.get("total", 0.0),
+                ])
+
+            ws_items = wb.create_sheet("Items")
+            ws_items.append(["N° Factura", "Producto", "Cantidad", "Precio", "Total"])
+            for inv in selected:
+                for item in inv.get("items", []):
+                    ws_items.append([
+                        inv.get("number"), item.get("product", ""),
+                        item.get("quantity", 0), item.get("price", 0.0), item.get("total", 0.0),
+                    ])
+
+            for col, width in [("A", 12), ("B", 14), ("C", 30), ("D", 14), ("E", 14),
+                               ("F", 12), ("G", 12), ("H", 12), ("I", 10), ("J", 14)]:
+                try:
+                    ws.column_dimensions[col].width = width
+                except Exception:
+                    pass
+
+            wb.save(filepath)
+        except Exception as e:
+            ModernMessageBox.showerror("Error", f"No se pudo exportar: {e}")
+            return
+
+        ModernMessageBox.showinfo("Exportado", f"{len(selected)} facturas exportadas en: {excel_root}")
+
+    def export_selected_clients_excel(self) -> None:
+        """Exportar clientes seleccionados a un archivo Excel."""
+        if Workbook is None:
+            ModernMessageBox.showerror(
+                "Error",
+                "La biblioteca openpyxl no está instalada. Instale openpyxl y vuelva a intentar."
+            )
+            return
+
+        selection = self.clients_tree.selection()
+        if selection:
+            ids = set()
+            for item in selection:
+                try:
+                    ids.add(int(self.clients_tree.item(item)["values"][0]))
+                except Exception:
+                    continue
+            selected = [c for c in self.clients if c.get("id") in ids]
+        else:
+            selected = list(self.clients)
+
+        if not selected:
+            ModernMessageBox.showwarning("Sin Selección", "No hay clientes seleccionados para exportar.")
+            return
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        excel_root = os.path.join(base_dir, "Excel")
+        os.makedirs(excel_root, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filepath = os.path.join(excel_root, f"Clientes_{timestamp}.xlsx")
+
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Clientes"
+            ws.append(["ID", "Nombre", "RIF/CI", "Tipo", "Teléfono", "Email",
+                       "Dirección", "Ciudad", "Estado", "CP", "Crédito (días)", "Saldo", "Notas"])
+            for c in selected:
+                ws.append([
+                    c.get("id"), c.get("name"), c.get("rif_ci", ""), c.get("type", ""),
+                    c.get("phone", ""), c.get("email", ""), c.get("address", ""),
+                    c.get("city", ""), c.get("state", ""), c.get("postal_code", ""),
+                    c.get("credit_days", 0), c.get("balance", 0.0), c.get("notes", ""),
+                ])
+
+            for col, width in [("A", 8), ("B", 32), ("C", 16), ("D", 12), ("E", 14),
+                               ("F", 24), ("G", 32), ("H", 16), ("I", 12), ("J", 10),
+                               ("K", 14), ("L", 14), ("M", 30)]:
+                try:
+                    ws.column_dimensions[col].width = width
+                except Exception:
+                    pass
+
+            wb.save(filepath)
+        except Exception as e:
+            ModernMessageBox.showerror("Error", f"No se pudo exportar: {e}")
+            return
+
+        ModernMessageBox.showinfo("Exportado", f"{len(selected)} clientes exportados en: {excel_root}")
+
+    def open_excel_export_folder(self) -> None:
         """Abrir carpeta raíz de exportaciones Excel en el explorador de archivos."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         excel_root = os.path.join(base_dir, "Excel")
         os.makedirs(excel_root, exist_ok=True)
 
         try:
-            os.startfile(excel_root)
+            open_path(excel_root)
         except Exception as e:
             ModernMessageBox.showerror("Error", f"No se pudo abrir la carpeta Excel:\n{str(e)}")
 
-    def open_pdf_export_folder(self):
+    def open_pdf_export_folder(self) -> None:
         """Abrir carpeta raíz de exportaciones PDF en el explorador de archivos."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         pdf_root = os.path.join(base_dir, "Facturas")
         os.makedirs(pdf_root, exist_ok=True)
 
         try:
-            os.startfile(pdf_root)
+            open_path(pdf_root)
         except Exception as e:
             ModernMessageBox.showerror("Error", f"No se pudo abrir la carpeta PDF:\n{str(e)}")
 
-    def open_delivery_note_export_folder(self):
+    def open_delivery_note_export_folder(self) -> None:
         """Abrir la carpeta raíz de notas de entrega en el explorador de archivos."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         delivery_note_root = os.path.join(base_dir, "NotasDeEntrega")
         os.makedirs(delivery_note_root, exist_ok=True)
 
         try:
-            os.startfile(delivery_note_root)
+            open_path(delivery_note_root)
         except Exception as e:
             ModernMessageBox.showerror("Error", f"No se pudo abrir la carpeta Notas de Entrega:\n{str(e)}")
 
-    def generate_report(self):
+    def _invoice_datetime(self, invoice):
+        """Convierte la fecha textual de una factura a ``datetime`` o None."""
+        try:
+            return datetime.strptime(str(invoice.get("date", "")).split()[0], '%d/%m/%Y')
+        except (ValueError, IndexError, AttributeError):
+            return None
+
+    def _period_comparison(self, scope: str):
+        """Calcula (etiqueta, total) del período actual y del anterior.
+
+        scope ``monthly`` compara el mes en curso con el mes anterior; cualquier
+        otro valor compara los últimos 30 días con los 30 días previos.
+        """
+        now = datetime.now()
+        dated = []
+        for inv in getattr(self, "invoices", []):
+            if inv.get("status") == "Cancelada":
+                continue
+            when = self._invoice_datetime(inv)
+            if when is not None:
+                dated.append((when, float(inv.get("total", 0) or 0)))
+
+        if scope == "monthly":
+            current_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            previous_end = current_start - timedelta(days=1)
+            previous_start = previous_end.replace(day=1)
+            current_total = sum(t for d, t in dated if current_start <= d <= now)
+            previous_total = sum(t for d, t in dated if previous_start <= d <= previous_end)
+            return (current_start.strftime('%m/%Y'), current_total), (previous_start.strftime('%m/%Y'), previous_total)
+
+        days = 30
+        current_start = now - timedelta(days=days - 1)
+        previous_end = current_start - timedelta(days=1)
+        previous_start = previous_end - timedelta(days=days - 1)
+        current_total = sum(t for d, t in dated if current_start <= d <= now)
+        previous_total = sum(t for d, t in dated if previous_start <= d <= previous_end)
+        return (f"Últimos {days} días", current_total), (f"{days} días previos", previous_total)
+
+    def _build_comparison_card(self, scope: str) -> None:
+        """Inserta una tarjeta comparando el período actual con el anterior."""
+        (current_label, current_total), (previous_label, previous_total) = self._period_comparison(scope)
+        if current_total == 0 and previous_total == 0:
+            return
+
+        if previous_total > 0:
+            delta = (current_total - previous_total) / previous_total * 100.0
+        else:
+            delta = None
+
+        if delta is None:
+            arrow, delta_color = "→", UI.NEUTRAL
+            delta_text = "Sin base de comparación"
+        elif delta >= 0:
+            arrow, delta_color = "▲", UI.SUCCESS
+            delta_text = f"+{delta:.1f}%"
+        else:
+            arrow, delta_color = "▼", UI.DANGER
+            delta_text = f"{delta:.1f}%"
+
+        card = ctk.CTkFrame(self.report_content_area, corner_radius=14, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
+        card.pack(fill="x", padx=10, pady=(0, 12))
+
+        ctk.CTkLabel(
+            card, text="Comparativa de períodos", font=("Inter", 13, "bold"), text_color=UI.TEXT_SEC_T
+        ).pack(side="left", padx=(18, 10), pady=14)
+
+        ctk.CTkLabel(
+            card,
+            text=f"Actual ({current_label}): ${current_total:,.2f}    ·    Anterior ({previous_label}): ${previous_total:,.2f}",
+            font=("Inter", 12), text_color=UI.NEUTRAL_T
+        ).pack(side="left", padx=10)
+
+        ctk.CTkLabel(
+            card, text=f"{arrow} {delta_text}", font=("Inter", 14, "bold"), text_color=delta_color
+        ).pack(side="right", padx=(10, 18))
+
+    def generate_report(self) -> None:
         """Generar reporte seleccionado con UI premium"""
         # Limpiar área de contenido (excepto cabecera)
         for widget in self.report_content_area.winfo_children():
@@ -4256,7 +4982,29 @@ class BillingSystem(ctk.CTkToplevel):
         report_type = self.report_var.get()
         self.report_title_label.configure(text=report_type)
 
+        # Indicador de carga (skeleton shimmer) mientras se construye el reporte
+        _skeleton = ui_kit.SkeletonShimmer(self.report_content_area, bg=UI.CARD_T)
+        _skeleton.show()
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+
         # Normalizar búsqueda para que coincida con el sidebar
+        comparison_scope = None
+        if "Ventas por Día" in report_type:
+            comparison_scope = "daily"
+        elif "Ventas por Mes" in report_type:
+            comparison_scope = "monthly"
+        elif "Ventas por Cliente" in report_type:
+            comparison_scope = "daily"
+        elif "Productos Top" in report_type:
+            comparison_scope = "daily"
+        elif "Flujo de Caja" in report_type:
+            comparison_scope = "daily"
+        if comparison_scope:
+            self._build_comparison_card(comparison_scope)
+
         if "Ventas por Día" in report_type:
             self.show_daily_sales_report()
         elif "Ventas por Mes" in report_type:
@@ -4276,7 +5024,9 @@ class BillingSystem(ctk.CTkToplevel):
         elif "Banco" in report_type: # Ajustado a sidebar "🏦 Banco"
             self.show_bank_report()
 
-    def show_daily_sales_report(self):
+        _skeleton.hide()
+
+    def show_daily_sales_report(self) -> None:
         """Mostrar reporte de ventas por día con UI premium"""
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -4295,9 +5045,9 @@ class BillingSystem(ctk.CTkToplevel):
         sorted_dates = sorted(sales_by_day.keys(), reverse=True)
 
         # 1. Gráfico de Tendencia
-        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         chart_card.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(chart_card, text="Tendencia de Ventas (Últimos Días)", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(chart_card, text="Tendencia de Ventas (Últimos Días)", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         plt_bg = "#FFFFFF" if ctk.get_appearance_mode() == "Light" else "#1E293B"
         plt_fg = "#1E293B" if ctk.get_appearance_mode() == "Light" else "#F8FAFC"
@@ -4306,9 +5056,9 @@ class BillingSystem(ctk.CTkToplevel):
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
         # 2. Tabla de Detalle
-        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         table_card.pack(fill="both", expand=True, padx=10, pady=10)
-        ctk.CTkLabel(table_card, text="Desglose por Fecha", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(table_card, text="Desglose por Fecha", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         columns = ("Fecha", "Total Ventas", "N° Facturas")
         tree = ttk.Treeview(table_card, columns=columns, show="headings", height=10)
@@ -4332,7 +5082,7 @@ class BillingSystem(ctk.CTkToplevel):
         tree.insert("", "end", values=("TOTAL (30d)", f"${total_sales:,.2f}", total_invoices), tags=('total',))
         tree.tag_configure('total', font=("Segoe UI", 10, "bold"), background="#F1F5F9")
 
-    def show_monthly_sales_report(self):
+    def show_monthly_sales_report(self) -> None:
         """Mostrar reporte de ventas por mes con UI premium"""
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -4352,9 +5102,9 @@ class BillingSystem(ctk.CTkToplevel):
         sorted_months = sorted(sales_by_month.keys(), reverse=True)
 
         # 1. Gráfico de Barras Mensual (Usar una versión del gráfico de tendencia adaptada a meses)
-        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         chart_card.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(chart_card, text="Histórico de Ventas Mensuales", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(chart_card, text="Histórico de Ventas Mensuales", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         plt_bg = "#FFFFFF" if ctk.get_appearance_mode() == "Light" else "#1E293B"
         plt_fg = "#1E293B" if ctk.get_appearance_mode() == "Light" else "#F8FAFC"
@@ -4374,9 +5124,9 @@ class BillingSystem(ctk.CTkToplevel):
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
         # 2. Tabla de Detalle
-        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         table_card.pack(fill="both", expand=True, padx=10, pady=10)
-        ctk.CTkLabel(table_card, text="Ingresos por Mes", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(table_card, text="Ingresos por Mes", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         columns = ("Mes", "Total Ventas", "N° Facturas")
         tree = ttk.Treeview(table_card, columns=columns, show="headings", height=10)
@@ -4400,7 +5150,7 @@ class BillingSystem(ctk.CTkToplevel):
         tree.insert("", "end", values=("TOTAL", f"${total_sales:,.2f}", total_invoices), tags=('total',))
         tree.tag_configure('total', font=("Segoe UI", 10, "bold"), background="#F1F5F9")
 
-    def show_sales_by_client_report(self):
+    def show_sales_by_client_report(self) -> None:
         """Mostrar reporte de ventas por cliente con UI premium"""
         # Contenedor con scroll para el reporte
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
@@ -4423,9 +5173,9 @@ class BillingSystem(ctk.CTkToplevel):
             return
 
         # 1. Sección de Gráfico (Card)
-        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         chart_card.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(chart_card, text="Distribución de Ventas por Cliente", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(chart_card, text="Distribución de Ventas por Cliente", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         plt_bg = "#FFFFFF" if ctk.get_appearance_mode() == "Light" else "#1E293B"
         plt_fg = "#1E293B" if ctk.get_appearance_mode() == "Light" else "#F8FAFC"
@@ -4434,9 +5184,9 @@ class BillingSystem(ctk.CTkToplevel):
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
         # 2. Sección de Tabla (Card)
-        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         table_card.pack(fill="both", expand=True, padx=10, pady=10)
-        ctk.CTkLabel(table_card, text="Detalle de Facturación por Cliente", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(table_card, text="Detalle de Facturación por Cliente", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         # Treeview para los datos
         columns = ("Cliente", "Total Ventas", "N° Facturas")
@@ -4466,7 +5216,7 @@ class BillingSystem(ctk.CTkToplevel):
         tree.insert("", "end", values=("TOTAL", f"${total_sales:,.2f}", total_count), tags=('total',))
         tree.tag_configure('total', font=("Segoe UI", 10, "bold"), background="#F1F5F9")
 
-    def show_top_products_report(self):
+    def show_top_products_report(self) -> None:
         """Mostrar reporte de productos más vendidos con UI premium"""
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -4487,9 +5237,9 @@ class BillingSystem(ctk.CTkToplevel):
             return
 
         # 1. Gráfico de Barras de Productos
-        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         chart_card.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(chart_card, text="Top 5 Productos por Cantidad", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(chart_card, text="Top 5 Productos por Cantidad", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         plt_bg = "#FFFFFF" if ctk.get_appearance_mode() == "Light" else "#1E293B"
         plt_fg = "#1E293B" if ctk.get_appearance_mode() == "Light" else "#F8FAFC"
@@ -4498,9 +5248,9 @@ class BillingSystem(ctk.CTkToplevel):
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
         # 2. Tabla de Detalle
-        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         table_card.pack(fill="both", expand=True, padx=10, pady=10)
-        ctk.CTkLabel(table_card, text="Ranking de Ventas", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(table_card, text="Ranking de Ventas", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         columns = ("Producto", "Cantidad", "Ingresos")
         tree = ttk.Treeview(table_card, columns=columns, show="headings", height=12)
@@ -4517,7 +5267,7 @@ class BillingSystem(ctk.CTkToplevel):
         for prod, data in sorted_products:
             tree.insert("", "end", values=(prod, data["quantity"], f"${data['revenue']:,.2f}"))
 
-    def show_low_stock_report(self):
+    def show_low_stock_report(self) -> None:
         """Mostrar reporte de productos bajos en stock con UI premium"""
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -4529,9 +5279,9 @@ class BillingSystem(ctk.CTkToplevel):
             return
 
         # 1. Gráfico de Stock (Top 10 más bajos)
-        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         chart_card.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(chart_card, text="Productos con Stock Crítico", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(chart_card, text="Productos con Stock Crítico", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         plt_bg = "#FFFFFF" if ctk.get_appearance_mode() == "Light" else "#1E293B"
         plt_fg = "#1E293B" if ctk.get_appearance_mode() == "Light" else "#F8FAFC"
@@ -4551,9 +5301,9 @@ class BillingSystem(ctk.CTkToplevel):
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
         # 2. Tabla de Detalle
-        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         table_card.pack(fill="both", expand=True, padx=10, pady=10)
-        ctk.CTkLabel(table_card, text="Listado de Reposición Urgente", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(table_card, text="Listado de Reposición Urgente", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         columns = ("Producto", "Stock Actual", "Mínimo", "Diferencia")
         tree = ttk.Treeview(table_card, columns=columns, show="headings", height=10)
@@ -4573,7 +5323,7 @@ class BillingSystem(ctk.CTkToplevel):
             diff = p["stock"] - min_s
             tree.insert("", "end", values=(p["name"], p["stock"], min_s, diff))
 
-    def show_cash_flow_report(self):
+    def show_cash_flow_report(self) -> None:
         """Mostrar reporte de flujo de caja con UI premium"""
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -4592,9 +5342,9 @@ class BillingSystem(ctk.CTkToplevel):
             return
 
         # 1. Gráfico Circular de Métodos
-        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         chart_card.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(chart_card, text="Distribución por Método de Pago", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(chart_card, text="Distribución por Método de Pago", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         plt_bg = "#FFFFFF" if ctk.get_appearance_mode() == "Light" else "#1E293B"
         plt_fg = "#1E293B" if ctk.get_appearance_mode() == "Light" else "#F8FAFC"
@@ -4612,7 +5362,7 @@ class BillingSystem(ctk.CTkToplevel):
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
         # 2. Tabla de Resumen
-        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         table_card.pack(fill="both", expand=True, padx=10, pady=10)
         
         columns = ("Método", "Monto", "Porcentaje")
@@ -4630,7 +5380,7 @@ class BillingSystem(ctk.CTkToplevel):
             perc = (amt / total_income * 100) if total_income > 0 else 0
             tree.insert("", "end", values=(m, f"${amt:,.2f}", f"{perc:.1f}%"))
 
-    def show_performance_report(self):
+    def show_performance_report(self) -> None:
         """Mostrar reporte de desempeño general con UI premium"""
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -4641,9 +5391,9 @@ class BillingSystem(ctk.CTkToplevel):
         avg_sale = total_sales / total_invoices if total_invoices > 0 else 0
         
         # 1. Gráfico de Desempeño (Ventas por Categoría)
-        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         chart_card.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(chart_card, text="Desempeño por Categoría de Producto", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(chart_card, text="Desempeño por Categoría de Producto", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         plt_bg = "#FFFFFF" if ctk.get_appearance_mode() == "Light" else "#1E293B"
         plt_fg = "#1E293B" if ctk.get_appearance_mode() == "Light" else "#F8FAFC"
@@ -4663,12 +5413,12 @@ class BillingSystem(ctk.CTkToplevel):
         ]
         
         for i, (label, val, col) in enumerate(metrics):
-            card = ctk.CTkFrame(metrics_card, corner_radius=12, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+            card = ctk.CTkFrame(metrics_card, corner_radius=12, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
             card.pack(side="left", fill="both", expand=True, padx=5)
-            ctk.CTkLabel(card, text=label, font=("Inter", 11), text_color=("#64748B", "#94A3B8")).pack(pady=(15, 0))
+            ctk.CTkLabel(card, text=label, font=("Inter", 11), text_color=UI.NEUTRAL_T).pack(pady=(15, 0))
             ctk.CTkLabel(card, text=val, font=("Inter", 16, "bold"), text_color=col).pack(pady=(5, 15))
 
-    def show_pending_clients_report(self):
+    def show_pending_clients_report(self) -> None:
         """Mostrar listado de clientes con saldos pendientes con UI premium"""
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -4686,9 +5436,9 @@ class BillingSystem(ctk.CTkToplevel):
             return
 
         # 1. Gráfico de Deuda por Cliente
-        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         chart_card.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(chart_card, text="Mayores Deudores", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(chart_card, text="Mayores Deudores", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         plt_bg = "#FFFFFF" if ctk.get_appearance_mode() == "Light" else "#1E293B"
         plt_fg = "#1E293B" if ctk.get_appearance_mode() == "Light" else "#F8FAFC"
@@ -4708,7 +5458,7 @@ class BillingSystem(ctk.CTkToplevel):
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
         # 2. Tabla de Detalle (Transaccional)
-        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         table_card.pack(fill="both", expand=True, padx=10, pady=10)
         
         columns = ("Factura", "Cliente", "Emisión", "Vencimiento", "Saldo Pendiente", "Días Restantes")
@@ -4754,7 +5504,7 @@ class BillingSystem(ctk.CTkToplevel):
         total_bg = "#FEF3C7" if ctk.get_appearance_mode() == "Light" else "#78350F"
         tree.tag_configure('total', font=("Segoe UI", 10, "bold"), background=total_bg)
 
-    def show_bank_report(self):
+    def show_bank_report(self) -> None:
         """Mostrar reporte de banco con UI premium"""
         container = ctk.CTkScrollableFrame(self.report_content_area, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -4770,9 +5520,9 @@ class BillingSystem(ctk.CTkToplevel):
             return
 
         # 1. Gráfico de Ingresos por Banco/Método
-        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        chart_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         chart_card.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(chart_card, text="Resumen de Canales de Pago", font=("Inter", 14, "bold"), text_color=("#475569", "#CBD5E1")).pack(pady=15, padx=20, anchor="w")
+        ctk.CTkLabel(chart_card, text="Resumen de Canales de Pago", font=("Inter", 14, "bold"), text_color=UI.TEXT_SEC_T).pack(pady=15, padx=20, anchor="w")
 
         plt_bg = "#FFFFFF" if ctk.get_appearance_mode() == "Light" else "#1E293B"
         plt_fg = "#1E293B" if ctk.get_appearance_mode() == "Light" else "#F8FAFC"
@@ -4791,7 +5541,7 @@ class BillingSystem(ctk.CTkToplevel):
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
         # 2. Tabla de Detalle
-        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=("#FFFFFF", "#1E293B"), border_width=1, border_color=("#F1F5F9", "#334155"))
+        table_card = ctk.CTkFrame(container, corner_radius=16, fg_color=UI.CARD_T, border_width=1, border_color=UI.SELECT_BG_T)
         table_card.pack(fill="both", expand=True, padx=10, pady=10)
         
         columns = ("Canal", "Monto Total")
@@ -4806,7 +5556,7 @@ class BillingSystem(ctk.CTkToplevel):
         for method, amt in payments.items():
             tree.insert("", "end", values=(method, f"${amt:,.2f}"))
 
-    def on_global_search(self, event):
+    def on_global_search(self, event) -> None:
         """Ejecutar la búsqueda global solo al confirmar con Enter."""
         try:
             if event is None or event.keysym in ("Return", "KP_Enter"):
@@ -4815,7 +5565,7 @@ class BillingSystem(ctk.CTkToplevel):
             # no bloquear por errores en eventos de teclado
             pass
 
-    def perform_global_search(self):
+    def perform_global_search(self) -> None:
         """Ejecutar búsqueda global"""
         query = self.global_search_entry.get().lower()
         if not query:
@@ -4850,13 +5600,19 @@ class BillingSystem(ctk.CTkToplevel):
         else:
             ModernMessageBox.showinfo("Búsqueda", "No se encontraron resultados")
 
-    def on_pos_search(self, event):
-        """Buscar productos en el POS"""
-        query = self.pos_search_entry.get().lower()
-        self.refresh_pos_products(query)
+    def on_pos_search(self, event) -> None:
+        """Buscar productos en el POS (con debounce de 300ms)"""
+        if not hasattr(self, "_search_debounce"):
+            self._search_debounce = ui_kit.debounced(self)
+        entry = self.pos_search_entry
+        self._search_debounce.schedule(
+            ui_kit.SEARCH_DEBOUNCE_MS,
+            lambda: self.refresh_pos_products(entry.get().lower()),
+        )
 
-    def add_first_pos_search_result(self, event=None):
+    def add_first_pos_search_result(self, event=None) -> None:
         """Añadir el primer resultado de la búsqueda POS a la factura"""
+        ui_kit.add_search_term(self.pos_search_entry.get())
         children = self.pos_tree.get_children()
         if children:
             self.pos_tree.selection_set(children[0])
@@ -4864,12 +5620,17 @@ class BillingSystem(ctk.CTkToplevel):
             self.pos_search_entry.delete(0, 'end')
             self.refresh_pos_products()
 
-    def on_inventory_search(self, event):
-        """Buscar productos en el inventario"""
-        query = self.inventory_search_entry.get().lower()
-        self.refresh_inventory(query)
+    def on_inventory_search(self, event) -> None:
+        """Buscar productos en el inventario (con debounce de 300ms)"""
+        if not hasattr(self, "_search_debounce"):
+            self._search_debounce = ui_kit.debounced(self)
+        entry = self.inventory_search_entry
+        self._search_debounce.schedule(
+            ui_kit.SEARCH_DEBOUNCE_MS,
+            lambda: self.refresh_inventory(entry.get().lower()),
+        )
 
-    def refresh_pos_products(self, filter_text=""):
+    def refresh_pos_products(self, filter_text="") -> None:
         """Refrescar lista de productos en el POS"""
         # Limpiar tabla
         for item in self.pos_tree.get_children():
@@ -4892,7 +5653,7 @@ class BillingSystem(ctk.CTkToplevel):
                 product["stock"]
             ))
 
-    def refresh_inventory(self, filter_text=""):
+    def refresh_inventory(self, filter_text="") -> None:
         """Refrescar inventario aplicando texto, categoría y proveedor."""
         # Actualizar lista de categorías en el combo (si existe el widget)
         if hasattr(self, 'category_filter'):
@@ -4969,7 +5730,7 @@ class BillingSystem(ctk.CTkToplevel):
                 product.get("location", "")
             ))
 
-    def get_remaining_credit_days_for_client(self, client):
+    def get_remaining_credit_days_for_client(self, client: Dict[str, Any]) -> int:
         """Calcular días de crédito restantes para un cliente (Asignación General)"""
         if not client.get("credit_days") or client.get("credit_days") <= 0:
             return 0
@@ -4993,7 +5754,7 @@ class BillingSystem(ctk.CTkToplevel):
             print(f"Error calculando días restantes: {e}")
             return client.get("credit_days", 0)
 
-    def get_remaining_days_for_invoice(self, invoice):
+    def get_remaining_days_for_invoice(self, invoice: Dict[str, Any]) -> int:
         """Calcular días restantes para una factura específica"""
         if not invoice.get("due_date"):
             return 0
@@ -5010,12 +5771,17 @@ class BillingSystem(ctk.CTkToplevel):
         except Exception:
             return 0
 
-    def on_client_search(self, event):
-        """Buscar clientes en la lista"""
-        query = self.client_search_entry.get().lower()
-        self.refresh_clients(query)
+    def on_client_search(self, event) -> None:
+        """Buscar clientes en la lista (con debounce de 300ms)"""
+        if not hasattr(self, "_search_debounce"):
+            self._search_debounce = ui_kit.debounced(self)
+        entry = self.client_search_entry
+        self._search_debounce.schedule(
+            ui_kit.SEARCH_DEBOUNCE_MS,
+            lambda: self.refresh_clients(entry.get().lower()),
+        )
 
-    def refresh_clients(self, filter_text=""):
+    def refresh_clients(self, filter_text="") -> None:
         """Refrescar lista de clientes"""
         # Limpiar tabla
         for item in self.clients_tree.get_children():
@@ -5056,7 +5822,7 @@ class BillingSystem(ctk.CTkToplevel):
                 client.get("type", "General") + f" ({rem_str})" if client.get("credit_days", 0) > 0 else client.get("type", "General")
             ))
 
-    def view_inventory_detail(self):
+    def view_inventory_detail(self) -> None:
         """Ver detalle completo del producto seleccionado (estrictamente de uno en uno)"""
         selection = self.inventory_tree.selection()
         if not selection:
@@ -5108,7 +5874,7 @@ class BillingSystem(ctk.CTkToplevel):
         
         ctk.CTkButton(dialog, text="Cerrar", command=dialog.destroy).pack(pady=10)
 
-    def view_client_detail(self):
+    def view_client_detail(self) -> None:
         """Ver detalle completo del cliente seleccionado (estrictamente de uno en uno)"""
         selection = self.clients_tree.selection()
         if not selection:
@@ -5166,7 +5932,7 @@ class BillingSystem(ctk.CTkToplevel):
         
         ctk.CTkButton(dialog, text="Cerrar", command=dialog.destroy).pack(pady=10)
 
-    def refresh_invoices(self):
+    def refresh_invoices(self) -> None:
         """Refrescar lista de facturas"""
         # Limpiar tabla
         for item in self.invoices_tree.get_children():
@@ -5184,13 +5950,13 @@ class BillingSystem(ctk.CTkToplevel):
                 invoice["payment_method"]
             ))
 
-    def update_counters(self):
+    def update_counters(self) -> None:
         """Actualizar contadores en la barra superior"""
         self.product_count_label.configure(text=f"Productos: {len(self.products)}")
         self.client_count_label.configure(text=f"Clientes: {len(self.clients)}")
         self.invoice_count_label.configure(text=f"Facturas: {len([inv for inv in self.invoices if inv['status'] != 'Cancelada'])}")
 
-    def refresh_all_views(self, event=None):
+    def refresh_all_views(self, event=None) -> None:
         """Refrescar todas las vistas manualmente o por automatización"""
         self.refresh_inventory()
         self.refresh_pos_products()
@@ -5202,9 +5968,38 @@ class BillingSystem(ctk.CTkToplevel):
             self.refresh_user_list()
         ModernMessageBox.showinfo("Refrescado", "Todas las vistas han sido actualizadas.")
 
+    def _focus_inventory_tab(self) -> None:
+        """Selecciona la pestaña de inventario (usado por la alerta de stock)."""
+        try:
+            if hasattr(self, "tab_control") and hasattr(self, "tab_inventory"):
+                self.tab_control.select(self.tab_inventory)
+        except tk.TclError:
+            pass
+
+    def notify_low_stock(self) -> None:
+        """Muestra un toast no bloqueante si hay productos en/bajo el stock mínimo."""
+        try:
+            low = [
+                p for p in getattr(self, "products", [])
+                if int(p.get("stock", 0) or 0) <= int(p.get("min_stock", 5) or 0)
+            ]
+        except (TypeError, ValueError):
+            return
+        if not low:
+            return
+        names = ", ".join(str(p.get("name", "?")) for p in low[:3])
+        extra = f" y {len(low) - 3} más" if len(low) > 3 else ""
+        Toast(
+            message=f"{len(low)} producto(s) con stock bajo: {names}{extra}",
+            title="Alerta de inventario",
+            icon="⚠️",
+            duration=config.AppConfig.TOAST_DURATION_MS,
+            on_click=self._focus_inventory_tab,
+        )
+
     # ─── PESTAÑA DE GESTIÓN DE USUARIOS (SOLO ADMIN) ───────────────────────────
 
-    def create_users_tab(self):
+    def create_users_tab(self) -> None:
         """Crear la interfaz de gestión de usuarios (solo para administradores)"""
         main_frame = ctk.CTkFrame(self.tab_users)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -5319,7 +6114,7 @@ class BillingSystem(ctk.CTkToplevel):
 
         self.refresh_user_list()
 
-    def refresh_user_list(self):
+    def refresh_user_list(self) -> None:
         """Recargar la lista de usuarios en la pestaña Usuarios"""
         if not hasattr(self, "users_tree"):
             return
@@ -5340,13 +6135,13 @@ class BillingSystem(ctk.CTkToplevel):
         except Exception as e:
             print(f"Error al refrescar lista de usuarios: {e}")
 
-    def open_new_user_from_tab(self):
+    def open_new_user_from_tab(self) -> None:
         """Abrir ventana de registro directamente desde la pestaña de usuarios"""
         win = RegisterWindow(self)
         self.wait_window(win)
         self.refresh_user_list()
 
-    def open_edit_user_from_tab(self):
+    def open_edit_user_from_tab(self) -> None:
         """Editar o recuperar contraseña de un usuario sin requerir contraseña anterior (estrictamente 1 por 1)"""
         selection = self.users_tree.selection()
         if not selection:
@@ -5360,7 +6155,7 @@ class BillingSystem(ctk.CTkToplevel):
         self.wait_window(win)
         self.refresh_user_list()
 
-    def delete_user_from_tab(self):
+    def delete_user_from_tab(self) -> None:
         """Eliminar usuario(s) desde la pestaña de administración permitiendo selección múltiple"""
         selection = self.users_tree.selection()
         if not selection:
@@ -5405,10 +6200,20 @@ class BillingSystem(ctk.CTkToplevel):
 
     # ───────────────────────────────────────────────────────────────────────────
 
-    def on_closing(self):
+    def on_closing(self) -> None:
         """Guardar datos al cerrar la aplicación"""
         try:
             self.cancel_all_after()
+        except Exception:
+            pass
+        # Guardar geometría y estado de la ventana
+        try:
+            state = "normal"
+            try:
+                state = self.state()
+            except Exception:
+                pass
+            ui_kit.save_window_state(self.geometry(), state)
         except Exception:
             pass
         self.save_data()
@@ -5428,7 +6233,7 @@ class BillingSystem(ctk.CTkToplevel):
         except Exception:
             pass
 
-    def cancel_all_after(self):
+    def cancel_all_after(self) -> None:
         """Cancelar todos los callbacks `after` pendientes en este intérprete"""
         try:
             # obtener ids de after pendientes (tupla)
@@ -5443,7 +6248,7 @@ class BillingSystem(ctk.CTkToplevel):
         except Exception:
             pass
 
-    def logout(self):
+    def logout(self) -> None:
         """Cerrar sesión: guardar, cancelar timers, destruir y reabrir login"""
         if not ModernMessageBox.askyesno("Cerrar Sesión", "¿Desea cerrar la sesión actual?"):
             return
@@ -5509,7 +6314,7 @@ class BillingSystem(ctk.CTkToplevel):
             except Exception:
                 pass
 
-    def save_data(self):
+    def save_data(self) -> None:
         """Guardar datos en SQLite y respaldo en JSON"""
         try:
             # Guardar en SQLite (principal)
@@ -5518,11 +6323,12 @@ class BillingSystem(ctk.CTkToplevel):
                 self.invoice_counter, self.iva_rate, self.exchange_rate,
                 self.include_pending_in_dashboard, self.auto_update_rate,
                 self.rate_source,
-                getattr(self, 'company_name', 'SISTEMA DE FACTURACIÓN AS'),
-                getattr(self, 'company_rif', 'RIF: N/A'),
-                getattr(self, 'company_address', 'Domicilio fiscal: N/A'),
-                getattr(self, 'company_phone', 'Teléfono: N/A')
+                getattr(self, 'company_name', config.AppConfig.COMPANY_NAME),
+                getattr(self, 'company_rif', config.AppConfig.COMPANY_RIF),
+                getattr(self, 'company_address', config.AppConfig.COMPANY_ADDRESS),
+                getattr(self, 'company_phone', config.AppConfig.COMPANY_PHONE)
             )
+            db.set_config("store_url", getattr(self, 'store_url', getattr(config.AppConfig, 'STORE_URL', '')))
 
             # Respaldo en JSON
             data = {
@@ -5536,20 +6342,21 @@ class BillingSystem(ctk.CTkToplevel):
                 "auto_update_rate": self.auto_update_rate,
                 "rate_source": self.rate_source,
                 "store_config": {
-                    "store_name": getattr(self, 'company_name', 'SISTEMA DE FACTURACIÓN AS'),
-                    "rif": getattr(self, 'company_rif', 'RIF: N/A'),
-                    "fiscal_domicile": getattr(self, 'company_address', 'Domicilio fiscal: N/A'),
-                    "phone": getattr(self, 'company_phone', 'Teléfono: N/A')
+                    "store_name": getattr(self, 'company_name', config.AppConfig.COMPANY_NAME),
+                    "rif": getattr(self, 'company_rif', config.AppConfig.COMPANY_RIF),
+                    "fiscal_domicile": getattr(self, 'company_address', config.AppConfig.COMPANY_ADDRESS),
+                    "phone": getattr(self, 'company_phone', config.AppConfig.COMPANY_PHONE),
+                    "store_url": getattr(self, 'store_url', getattr(config.AppConfig, 'STORE_URL', ''))
                 },
-                "version": "3.4"
+                "version": config.AppConfig.APP_VERSION
             }
-            with open("billing_data.json", "w", encoding="utf-8") as f:
+            with open(config.AppConfig.JSON_BACKUP_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             ModernMessageBox.showerror("Error Crítico", f"No se pudieron guardar los datos: {e}")
             print(f"Error al guardar datos: {e}")
 
-    def load_data(self):
+    def load_data(self) -> None:
         """Cargar datos desde la base de datos o JSON de respaldo"""
         try:
             # Inicializar la base de datos
@@ -5570,61 +6377,64 @@ class BillingSystem(ctk.CTkToplevel):
                 self.include_pending_in_dashboard = include_pending_in_dashboard
                 self.auto_update_rate = auto_update_rate
                 self.rate_source = rate_source
-                self.company_name = store_name or "SISTEMA DE FACTURACIÓN AS"
-                self.company_rif = company_rif or "RIF: N/A"
-                self.company_address = company_address or "Domicilio fiscal: N/A"
-                self.company_phone = company_phone or "Teléfono: N/A"
+                self.company_name = store_name or config.AppConfig.COMPANY_NAME
+                self.company_rif = company_rif or config.AppConfig.COMPANY_RIF
+                self.company_address = company_address or config.AppConfig.COMPANY_ADDRESS
+                self.company_phone = company_phone or config.AppConfig.COMPANY_PHONE
+                self.store_url = db.get_config("store_url", getattr(config.AppConfig, 'STORE_URL', ''))
                 return
             
             # Si SQLite está vacío, intentar cargar desde JSON (Respaldo/Migración)
-            if os.path.exists("billing_data.json"):
-                with open("billing_data.json", "r", encoding="utf-8") as f:
+            if os.path.exists(config.AppConfig.JSON_BACKUP_PATH):
+                with open(config.AppConfig.JSON_BACKUP_PATH, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self.products = data.get("products", [])
                     self.clients = data.get("clients", [])
                     self.invoices = data.get("invoices", [])
-                    self.invoice_counter = data.get("invoice_counter", 1000)
-                    self.iva_rate = data.get("iva_rate", 0.16)
-                    self.exchange_rate = data.get("exchange_rate", 350.0)
-                    self.include_pending_in_dashboard = data.get("include_pending_in_dashboard", True)
-                    self.auto_update_rate = data.get("auto_update_rate", False)
-                    self.rate_source = data.get("rate_source", "oficial")
+                    self.invoice_counter = data.get("invoice_counter", config.AppConfig.INVOICE_COUNTER_START)
+                    self.iva_rate = data.get("iva_rate", config.AppConfig.IVA_RATE)
+                    self.exchange_rate = data.get("exchange_rate", config.AppConfig.EXCHANGE_RATE)
+                    self.include_pending_in_dashboard = data.get("include_pending_in_dashboard", config.AppConfig.INCLUDE_PENDING_IN_DASHBOARD)
+                    self.auto_update_rate = data.get("auto_update_rate", config.AppConfig.AUTO_UPDATE_RATE)
+                    self.rate_source = data.get("rate_source", config.AppConfig.RATE_SOURCE)
                     store_config = data.get("store_config", {})
-                    self.company_name = store_config.get("store_name", "SISTEMA DE FACTURACIÓN AS")
-                    self.company_rif = store_config.get("rif", "RIF: N/A")
-                    self.company_address = store_config.get("fiscal_domicile", "Domicilio fiscal: N/A")
-                    self.company_phone = store_config.get("phone", "Teléfono: N/A")
+                    self.company_name = store_config.get("store_name", config.AppConfig.COMPANY_NAME)
+                    self.company_rif = store_config.get("rif", config.AppConfig.COMPANY_RIF)
+                    self.company_address = store_config.get("fiscal_domicile", config.AppConfig.COMPANY_ADDRESS)
+                    self.company_phone = store_config.get("phone", config.AppConfig.COMPANY_PHONE)
+                    self.store_url = store_config.get("store_url", getattr(config.AppConfig, 'STORE_URL', ''))
                     # Persistir en SQLite para futuras cargas
                     self.save_data()
             else:
                 # Datos de ejemplo si no existe nada
-                    self.products = [
-                        {"id": 1, "code": "PROD001", "name": "Laptop HP 15", "category": "Electrónica", 
-                         "price": 899.99, "stock": 15, "min_stock": 3, "location": "A1"},
-                        {"id": 2, "code": "PROD002", "name": "Mouse Inalámbrico", "category": "Electrónica", 
-                         "price": 29.99, "stock": 50, "min_stock": 10, "location": "A2"},
-                        {"id": 3, "code": "PROD003", "name": "Teclado Mecánico", "category": "Electrónica", 
-                         "price": 79.99, "stock": 25, "min_stock": 5, "location": "A3"},
-                        {"id": 4, "code": "PROD004", "name": "Monitor 24\"", "category": "Electrónica", 
-                         "price": 199.99, "stock": 12, "min_stock": 3, "location": "B1"},
-                        {"id": 5, "code": "PROD005", "name": "Impresora Multifuncional", "category": "Electrónica", 
-                         "price": 149.99, "stock": 8, "min_stock": 2, "location": "B2"}
-                    ]
+                self.products = [
+                    {"id": 1, "code": "PROD001", "name": "Laptop HP 15", "category": "Electrónica", 
+                     "price": 899.99, "stock": 15, "min_stock": 3, "location": "A1"},
+                    {"id": 2, "code": "PROD002", "name": "Mouse Inalámbrico", "category": "Electrónica", 
+                     "price": 29.99, "stock": 50, "min_stock": 10, "location": "A2"},
+                    {"id": 3, "code": "PROD003", "name": "Teclado Mecánico", "category": "Electrónica", 
+                     "price": 79.99, "stock": 25, "min_stock": 5, "location": "A3"},
+                    {"id": 4, "code": "PROD004", "name": "Monitor 24\"", "category": "Electrónica", 
+                     "price": 199.99, "stock": 12, "min_stock": 3, "location": "B1"},
+                    {"id": 5, "code": "PROD005", "name": "Impresora Multifuncional", "category": "Electrónica", 
+                     "price": 149.99, "stock": 8, "min_stock": 2, "location": "B2"}
+                ]
 
-                    self.clients = [
-                        {"id": 1, "name": "Empresa XYZ S.A.", "rif_ci": "XYZ123456789", "type": "Empresa", 
-                         "phone": "555-1234", "email": "contacto@xyz.com"},
-                        {"id": 2, "name": "Juan Pérez", "type": "Público", "phone": "555-5678", 
-                         "email": "juan@email.com"}
-                    ]
+                self.clients = [
+                    {"id": 1, "name": "Empresa XYZ S.A.", "rif_ci": "XYZ123456789", "type": "Empresa", 
+                     "phone": "555-1234", "email": "contacto@xyz.com"},
+                    {"id": 2, "name": "Juan Pérez", "type": "Público", "phone": "555-5678", 
+                     "email": "juan@email.com"}
+                ]
 
-                    self.invoices = []
-                    self.invoice_counter = 1000
-                    self.company_name = "SISTEMA DE FACTURACIÓN AS"
-                    self.company_rif = "RIF: N/A"
-                    self.company_address = "Domicilio fiscal: N/A"
-                    self.company_phone = "Teléfono: N/A"
-                    self.save_data()
+                self.invoices = []
+                self.invoice_counter = config.AppConfig.INVOICE_COUNTER_START
+                self.company_name = config.AppConfig.COMPANY_NAME
+                self.company_rif = config.AppConfig.COMPANY_RIF
+                self.company_address = config.AppConfig.COMPANY_ADDRESS
+                self.company_phone = config.AppConfig.COMPANY_PHONE
+                self.store_url = getattr(config.AppConfig, 'STORE_URL', '')
+                self.save_data()
 
         except Exception as e:
             ModernMessageBox.showerror("Error al cargar datos", f"Ocurrió un error al cargar los datos: {e}")
@@ -5633,13 +6443,14 @@ class BillingSystem(ctk.CTkToplevel):
             self.products = []
             self.clients = []
             self.invoices = []
-            self.invoice_counter = 1000
-            self.company_name = "SISTEMA DE FACTURACIÓN AS"
-            self.company_rif = "RIF: N/A"
-            self.company_address = "Domicilio fiscal: N/A"
-            self.company_phone = "Teléfono: N/A"
+            self.invoice_counter = config.AppConfig.INVOICE_COUNTER_START
+            self.company_name = config.AppConfig.COMPANY_NAME
+            self.company_rif = config.AppConfig.COMPANY_RIF
+            self.company_address = config.AppConfig.COMPANY_ADDRESS
+            self.company_phone = config.AppConfig.COMPANY_PHONE
+            self.store_url = getattr(config.AppConfig, 'STORE_URL', '')
 
-    def query_dolar_api(self, source_type="oficial"):
+    def query_dolar_api(self, source_type: str = "oficial") -> Tuple[Optional[float], Optional[str]]:
         """Consulta la API de ve.dolarapi.com para obtener la tasa de cambio oficial del BCV.
         Retorna (tasa, None) en éxito, o (None, error_str) en caso de error.
         """
@@ -5668,11 +6479,11 @@ class BillingSystem(ctk.CTkToplevel):
         except Exception as e:
             return None, f"Error: {str(e)}"
 
-    def start_auto_update_loop(self):
+    def start_auto_update_loop(self) -> None:
         """Inicia el temporizador de auto-actualización de la tasa de cambio"""
         self.check_and_perform_auto_update()
 
-    def check_and_perform_auto_update(self):
+    def check_and_perform_auto_update(self) -> None:
         """Verifica si está activa la opción de auto-actualización y realiza la consulta en segundo plano"""
         if getattr(self, "auto_update_rate", False):
             import threading
@@ -5685,14 +6496,14 @@ class BillingSystem(ctk.CTkToplevel):
         # Programar próxima consulta para dentro de 30 minutos (1800000 ms)
         self.after(1800000, self.check_and_perform_auto_update)
 
-    def apply_auto_updated_rate(self, rate):
+    def apply_auto_updated_rate(self, rate) -> None:
         """Aplica la tasa auto-actualizada y la persiste"""
         self.exchange_rate = rate
         self.rate_source = "oficial"
         self.save_data()
         print(f"INFO: Tasa auto-actualizada BCV a {rate:.2f} VES")
 
-    def trigger_immediate_auto_update(self):
+    def trigger_immediate_auto_update(self) -> None:
         """Fuerza una consulta inmediata de auto-actualización"""
         import threading
         def run():
@@ -5703,7 +6514,7 @@ class BillingSystem(ctk.CTkToplevel):
 
 
 class SplashScreen(tk.Toplevel):
-    def __init__(self, master=None):
+    def __init__(self, master=None) -> None:
         super().__init__(master)
         self.title("")
         self.overrideredirect(True)  # Sin barra de título para look minimalista
@@ -5741,7 +6552,7 @@ class SplashScreen(tk.Toplevel):
         )
         # Subtítulo
         self.sub_id = self.canvas.create_text(
-            w // 2, logo_y + 40, text="3.4v",
+            w // 2, logo_y + 40, text="3.5v",
             font=("Segoe UI", 14), fill="#FFFFFF"
         )
         
@@ -5782,7 +6593,7 @@ class SplashScreen(tk.Toplevel):
         self.after(200, self._animate_dots)
         self.after(100, self._animate_progress)
     
-    def _animate_fade_in(self):
+    def _animate_fade_in(self) -> None:
         """Fade-in del texto título"""
         if not self.winfo_exists():
             return
@@ -5803,7 +6614,7 @@ class SplashScreen(tk.Toplevel):
                                     fill=f"#{sub_r:02x}{sub_g:02x}{sub_b:02x}")
             self.after(30, self._animate_fade_in)
     
-    def _animate_dots(self):
+    def _animate_dots(self) -> None:
         """Pulsar los puntos secuencialmente"""
         if not self.winfo_exists():
             return
@@ -5817,7 +6628,7 @@ class SplashScreen(tk.Toplevel):
             for dot in self.dots:
                 self.canvas.itemconfig(dot, fill="#2563EB")
     
-    def _animate_progress(self):
+    def _animate_progress(self) -> None:
         """Avance suave de la barra de progreso"""
         if not self.winfo_exists():
             return
@@ -5833,7 +6644,7 @@ class SplashScreen(tk.Toplevel):
         else:
             self.after(400, self._fade_out)
     
-    def _fade_out(self, alpha=1.0):
+    def _fade_out(self, alpha=1.0) -> None:
         """Fade-out suave al terminar"""
         if not self.winfo_exists():
             return
@@ -5850,7 +6661,7 @@ class SplashScreen(tk.Toplevel):
 
 
 class LoginWindow(ctk.CTkToplevel):
-    def __init__(self, on_login_success, master=None):
+    def __init__(self, on_login_success, master=None) -> None:
         super().__init__(master)
         self.on_login_success = on_login_success
         self.title("Iniciar Sesión")
@@ -5880,9 +6691,9 @@ class LoginWindow(ctk.CTkToplevel):
         # --- Contenido centrado ---
         # Logo
         try:
-            if os.path.exists("img/logo.png"):
-                logo_img = Image.open("img/logo.png")
-                self.logo_img = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(80, 80))
+            cached_logo = load_ctk_image("img/logo.png", (80, 80))
+            if cached_logo is not None:
+                self.logo_img = cached_logo
                 ctk.CTkLabel(self.content_frame, text="", image=self.logo_img).pack(pady=(20, 0))
         except Exception as e:
             print(f"Error loading logo in login: {e}")
@@ -5890,7 +6701,7 @@ class LoginWindow(ctk.CTkToplevel):
         # Título
         ctk.CTkLabel(self.content_frame, text="Facturación AS", font=("Segoe UI", 24, "bold")).pack(pady=(10, 5))
         ctk.CTkLabel(self.content_frame, text="Inicia sesión para continuar", font=("Segoe UI", 12),
-                     text_color=("#64748B", "#94A3B8")).pack(pady=(0, 20))
+                     text_color=UI.NEUTRAL_T).pack(pady=(0, 20))
 
         # Card de login
         card = ctk.CTkFrame(self.content_frame, corner_radius=12, width=340)
@@ -5916,8 +6727,8 @@ class LoginWindow(ctk.CTkToplevel):
         
         self.pass_toggle_btn = ctk.CTkButton(pass_frame, text="🔒", width=35, height=38, 
                                             corner_radius=8, fg_color="transparent", 
-                                            text_color=("#64748B", "#94A3B8"),
-                                            hover_color=("#E2E8F0", "#2A2A3C"),
+                                            text_color=UI.NEUTRAL_T,
+                                            hover_color=UI.FIELD_DARK_T,
                                             command=lambda: toggle_password_visibility(self.password_entry, self.pass_toggle_btn))
         self.pass_toggle_btn.pack(side="right", padx=(5, 0))
 
@@ -5936,8 +6747,8 @@ class LoginWindow(ctk.CTkToplevel):
         # Botón toggle para usuarios (Abrir ventana independiente)
         self.toggle_btn = ctk.CTkButton(self.content_frame, text="👥 Seleccionar Usuario Registrado", 
                                        command=self.open_user_selection,
-                                       fg_color="transparent", text_color=("#64748B", "#94A3B8"),
-                                       font=("Segoe UI", 11), hover_color=("#E2E8F0", "#2A2A3C"),
+                                       fg_color="transparent", text_color=UI.NEUTRAL_T,
+                                       font=("Segoe UI", 11), hover_color=UI.FIELD_DARK_T,
                                        width=200)
         self.toggle_btn.pack(pady=(15, 0))
 
@@ -5958,18 +6769,18 @@ class LoginWindow(ctk.CTkToplevel):
         self.attributes("-alpha", 0.0)
         self._fade_in()
 
-    def open_user_selection(self):
+    def open_user_selection(self) -> None:
         """Abrir la ventana de selección de usuarios"""
         UserSelectionWindow(self)
 
-    def select_user(self, username):
+    def select_user(self, username) -> None:
         """Rellenar los campos con el usuario seleccionado"""
         self.username_entry.delete(0, tk.END)
         self.username_entry.insert(0, username)
         self.password_entry.delete(0, tk.END)
         self.password_entry.focus()
 
-    def _fade_in(self, alpha=0.0):
+    def _fade_in(self, alpha=0.0) -> None:
         """Animación de fade-in sutil"""
         if alpha < 1.0:
             alpha = min(alpha + 0.06, 1.0)
@@ -5979,7 +6790,7 @@ class LoginWindow(ctk.CTkToplevel):
                 return
             self.after(16, lambda: self._fade_in(alpha))
 
-    def login(self, event=None):
+    def login(self, event=None) -> None:
         username = self.username_entry.get()
         password = self.password_entry.get()
         success, role = db.authenticate_user(username, password)
@@ -5992,7 +6803,7 @@ class LoginWindow(ctk.CTkToplevel):
             # Agitar animación sutil
             self._shake()
 
-    def _shake(self, count=0):
+    def _shake(self, count=0) -> None:
         """Animación de shake sutil en error de login"""
         if count >= 6:
             return
@@ -6004,23 +6815,23 @@ class LoginWindow(ctk.CTkToplevel):
         except Exception:
             pass
 
-    def open_register(self):
+    def open_register(self) -> None:
         """Abrir la ventana de registro independiente"""
         RegisterWindow(self)
 
-    def register(self):
+    def register(self) -> None:
         # Esta función ahora es reemplazada por open_register, pero se mantiene por compatibilidad si se llama internamente
         self.open_register()
 
 
 
 class RegisterWindow(ctk.CTkToplevel):
-    def __init__(self, parent):
+    def __init__(self, parent) -> None:
         super().__init__(parent)
         self.title("Registro de Usuario")
         self.geometry("600x700")
         self.resizable(False, False)
-        self.configure(fg_color=("#F8FAFC", "#1A1A2E")) # Adaptable
+        self.configure(fg_color=UI.BG_DARK_T) # Adaptable
         self.transient(parent)
         self.grab_set()
         fade_in_window(self)
@@ -6058,12 +6869,12 @@ class RegisterWindow(ctk.CTkToplevel):
             
             ctk.CTkLabel(row, text=label_text, width=150, anchor="w", 
                          font=("Segoe UI", 12), 
-                         text_color=("#64748B", "#A0A0B8")).pack(side="left")
+                         text_color=UI.NEUTRAL_MUTED_T).pack(side="left")
             
             show_char = "*" if "password" in var_name else ""
             entry = ctk.CTkEntry(row, height=35, corner_radius=6, 
-                                 fg_color=("#FFFFFF", "#2A2A3C"), 
-                                 border_color=("#E2E8F0", "#3F3F5F"), 
+                                 fg_color=UI.CARD_DARK_T, 
+                                 border_color=UI.FIELD_MID_T, 
                                  text_color=("#1E293B", "white"),
                                  placeholder_text=f"Ingrese {label_text.lower()}")
             if show_char: 
@@ -6073,8 +6884,8 @@ class RegisterWindow(ctk.CTkToplevel):
                 # Botón de toggle individual para cada campo de contraseña
                 toggle_btn = ctk.CTkButton(row, text="🔒", width=35, height=35, 
                                           corner_radius=6, fg_color="transparent", 
-                                          text_color=("#64748B", "#94A3B8"),
-                                          hover_color=("#E2E8F0", "#2A2A3C"),
+                                          text_color=UI.NEUTRAL_T,
+                                          hover_color=UI.FIELD_DARK_T,
                                           font=("Segoe UI", 12))
                 toggle_btn.configure(command=lambda e=entry, b=toggle_btn: toggle_password_visibility(e, b))
                 toggle_btn.pack(side="right", padx=(5, 0))
@@ -6088,7 +6899,7 @@ class RegisterWindow(ctk.CTkToplevel):
         rol_row.pack(fill="x", pady=20)
         ctk.CTkLabel(rol_row, text="Rol:", width=150, anchor="w", 
                      font=("Segoe UI", 12, "bold"), 
-                     text_color=("#64748B", "#A0A0B8")).pack(side="left")
+                     text_color=UI.NEUTRAL_MUTED_T).pack(side="left")
         
         self.role_var = tk.StringVar(value="empleado")
         ctk.CTkRadioButton(rol_row, text="Empleado", variable=self.role_var, value="empleado", 
@@ -6107,14 +6918,14 @@ class RegisterWindow(ctk.CTkToplevel):
 
         ctk.CTkButton(btn_frame, text="Cancelar", command=self.destroy,
                      width=140, height=40, corner_radius=8,
-                     fg_color=("#94A3B8", "#475569"), hover_color=("#64748B", "#334155"),
+                     fg_color=UI.PLACEHOLDER_T, hover_color=UI.NEUTRAL_DARK_T,
                      font=("Segoe UI", 13, "bold")).pack(side="left", padx=10)
 
         # Vincular teclas Enter y Escape
         self.bind("<Return>", lambda e: self.do_register())
         self.bind("<Escape>", lambda e: self.destroy())
 
-    def do_register(self):
+    def do_register(self) -> None:
         data = {k: v.get() for k, v in self.entries.items()}
         role = self.role_var.get()
 
@@ -6152,14 +6963,14 @@ class RegisterWindow(ctk.CTkToplevel):
 
 
 class EditUserWindow(ctk.CTkToplevel):
-    def __init__(self, parent, username):
+    def __init__(self, parent, username) -> None:
         super().__init__(parent)
         self.parent = parent
         self.username = username
         self.title(f"Editar Perfil: {username}")
         self.geometry("600x750")
         self.resizable(False, False)
-        self.configure(fg_color=("#F8FAFC", "#1A1A2E"))
+        self.configure(fg_color=UI.BG_DARK_T)
         self.transient(parent)
         self.grab_set()
         fade_in_window(self)
@@ -6198,12 +7009,12 @@ class EditUserWindow(ctk.CTkToplevel):
             
             ctk.CTkLabel(row, text=label_text, width=170, anchor="w", 
                          font=("Segoe UI", 12), 
-                         text_color=("#64748B", "#A0A0B8")).pack(side="left")
+                         text_color=UI.NEUTRAL_MUTED_T).pack(side="left")
             
             show_char = "*" if "password" in var_name else ""
             entry = ctk.CTkEntry(row, height=35, corner_radius=6, 
-                                 fg_color=("#FFFFFF", "#2A2A3C"), 
-                                 border_color=("#E2E8F0", "#3F3F5F"), 
+                                 fg_color=UI.CARD_DARK_T, 
+                                 border_color=UI.FIELD_MID_T, 
                                  text_color=("#1E293B", "white"))
             
             # Pre-rellenar datos existentes si no es campo de contraseña
@@ -6217,8 +7028,8 @@ class EditUserWindow(ctk.CTkToplevel):
                 # Botón de visibilidad
                 toggle_btn = ctk.CTkButton(row, text="🔒", width=35, height=35, 
                                           corner_radius=6, fg_color="transparent", 
-                                          text_color=("#64748B", "#94A3B8"),
-                                          hover_color=("#E2E8F0", "#2A2A3C"),
+                                          text_color=UI.NEUTRAL_T,
+                                          hover_color=UI.FIELD_DARK_T,
                                           font=("Segoe UI", 12))
                 toggle_btn.configure(command=lambda e=entry, b=toggle_btn: toggle_password_visibility(e, b))
                 toggle_btn.pack(side="right", padx=(5, 0))
@@ -6232,7 +7043,7 @@ class EditUserWindow(ctk.CTkToplevel):
         rol_row.pack(fill="x", pady=20)
         ctk.CTkLabel(rol_row, text="Rol del Usuario:", width=170, anchor="w", 
                      font=("Segoe UI", 12, "bold"), 
-                     text_color=("#64748B", "#A0A0B8")).pack(side="left")
+                     text_color=UI.NEUTRAL_MUTED_T).pack(side="left")
         
         self.role_var = tk.StringVar(value=user_data.get('role', 'empleado'))
         ctk.CTkRadioButton(rol_row, text="Empleado", variable=self.role_var, value="empleado", 
@@ -6251,10 +7062,10 @@ class EditUserWindow(ctk.CTkToplevel):
 
         ctk.CTkButton(btn_frame, text="CANCELAR", command=self.destroy,
                      width=180, height=45, corner_radius=10,
-                     fg_color=("#94A3B8", "#475569"), hover_color=("#64748B", "#334155"),
+                     fg_color=UI.PLACEHOLDER_T, hover_color=UI.NEUTRAL_DARK_T,
                      font=("Segoe UI", 13, "bold")).pack(side="left", padx=15)
 
-    def save_edits(self):
+    def save_edits(self) -> None:
         data = {k: v.get() for k, v in self.entries.items()}
         role = self.role_var.get()
 
@@ -6284,13 +7095,13 @@ class EditUserWindow(ctk.CTkToplevel):
             ModernMessageBox.showerror("Error", f"Ocurrió un error inesperado: {e}", parent=self)
 
 class UserSelectionWindow(ctk.CTkToplevel):
-    def __init__(self, parent):
+    def __init__(self, parent) -> None:
         super().__init__(parent)
         self.parent = parent
         self.title("Gestión de Usuarios")
         self.geometry("700x550")
         self.resizable(False, False)
-        self.configure(fg_color=("#F1F5F9", "#0F172A")) # Slate background
+        self.configure(fg_color=UI.SLATE_100_VDARK_T) # Slate background
         self.transient(parent)
         self.grab_set()
         fade_in_window(self)
@@ -6308,15 +7119,15 @@ class UserSelectionWindow(ctk.CTkToplevel):
         
         ctk.CTkLabel(header_frame, text="Gestión de Acceso", 
                      font=("Segoe UI", 24, "bold"),
-                     text_color=("#1E293B", "#F8FAFC")).pack()
+                     text_color=UI.TEXT_T).pack()
         ctk.CTkLabel(header_frame, text="Seleccione un usuario para iniciar sesión o gestionar la lista", 
                      font=("Segoe UI", 13),
-                     text_color=("#64748B", "#94A3B8")).pack()
+                     text_color=UI.NEUTRAL_T).pack()
 
         # Contenedor principal con sombra simulada (borde)
         main_container = ctk.CTkFrame(self, corner_radius=15, 
-                                     fg_color=("#FFFFFF", "#1E293B"),
-                                     border_width=1, border_color=("#E2E8F0", "#334155"))
+                                     fg_color=UI.CARD_T,
+                                     border_width=1, border_color=UI.MUTED_T)
         main_container.pack(padx=30, fill="both", expand=True)
 
         # Estilo para Treeview (Row height)
@@ -6385,7 +7196,7 @@ class UserSelectionWindow(ctk.CTkToplevel):
 
         self.refresh_user_list()
 
-    def refresh_user_list(self):
+    def refresh_user_list(self) -> None:
         try:
             for item in self.tree.get_children():
                 self.tree.delete(item)
@@ -6400,7 +7211,7 @@ class UserSelectionWindow(ctk.CTkToplevel):
         except Exception as e:
             print(f"Error refreshing users: {e}")
 
-    def select_and_close(self):
+    def select_and_close(self) -> None:
         selected = self.tree.selection()
         if not selected:
             ModernMessageBox.showerror("Error", "Por favor, seleccione un usuario de la lista", parent=self)
@@ -6413,7 +7224,7 @@ class UserSelectionWindow(ctk.CTkToplevel):
         self.parent.select_user(username)
         self.destroy()
 
-    def delete_user(self, event=None):
+    def delete_user(self, event=None) -> None:
         selected = self.tree.selection()
         if not selected:
             ModernMessageBox.showerror("Error", "Seleccione al menos un usuario para eliminar", parent=self)
@@ -6449,7 +7260,7 @@ class UserSelectionWindow(ctk.CTkToplevel):
         elif confirm_word is not None:
             ModernMessageBox.showerror("Error de Validación", "La palabra de confirmación es incorrecta. Acción cancelada.", parent=self)
 
-    def show_users_menu(self, event):
+    def show_users_menu(self, event) -> None:
         item = self.tree.identify_row(event.y)
         if item:
             if item not in self.tree.selection():
@@ -6461,7 +7272,7 @@ class UserSelectionWindow(ctk.CTkToplevel):
             menu.add_command(label="❌ Eliminar Usuario", command=self.delete_user)
             menu.post(event.x_root, event.y_root)
 
-    def view_user_details(self):
+    def view_user_details(self) -> None:
         selected = self.tree.selection()
         if not selected: return
         if len(selected) > 1:
@@ -6478,7 +7289,7 @@ class UserSelectionWindow(ctk.CTkToplevel):
             details += f"📍 Área: {user_data['area'] or 'N/A'}"
             ModernMessageBox.showinfo("Información de Usuario", details, parent=self)
 
-    def open_edit_user(self):
+    def open_edit_user(self) -> None:
         selected = self.tree.selection()
         if not selected: return
         if len(selected) > 1:
@@ -6505,13 +7316,17 @@ if __name__ == "__main__":
     # Crear raíz Tk oculta para evitar múltiples raíces
     root = tk.Tk()
     root.withdraw()
+
+    # Aplicar escala de interfaz guardada y feedback visual (pulse)
+    ui_kit.apply_ui_scaling()
+    ui_kit.install_pulse(root)
     
     # Splash screen
     splash = SplashScreen(root)
     splash.wait_window()
     
     # Login (usar la raíz oculta como master para evitar creación implícita)
-    def start_app(role):
+    def start_app(role) -> None:
         BillingSystem(master=root, user_role=role)
     login = LoginWindow(start_app, master=root)
 
