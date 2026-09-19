@@ -1,0 +1,363 @@
+{
+  "products": [
+    {
+      "id": 1,
+      "code": "PROD001",
+      "name": "Laptop HP 15",
+      "category": "Electrónica",
+      "purchase_price": 0.0,
+      "price": 899.99,
+      "stock": 99,
+      "min_stock": 3,
+      "location": "A1",
+      "supplier": "HP",
+      "notes": "",
+      "tax_exempt": false
+    },
+    {
+      "id": 2,
+      "code": "PROD002",
+      "name": "Mouse Inalámbrico",
+      "category": "Electrónica",
+      "purchase_price": 0.0,
+      "price": 29.99,
+      "stock": 48,
+      "min_stock": 10,
+      "location": "A2",
+      "supplier": "DR HOME",
+      "notes": "",
+      "tax_exempt": false
+    },
+    {
+      "id": 3,
+      "code": "PROD003",
+      "name": "Teclado Mecánico",
+      "category": "Electrónica",
+      "purchase_price": 0.0,
+      "price": 79.99,
+      "stock": 98,
+      "min_stock": 5,
+      "location": "A3",
+      "supplier": "",
+      "notes": "",
+      "tax_exempt": false
+    },
+    {
+      "id": 4,
+      "code": "PROD004",
+      "name": "Monitor 24\"",
+      "category": "Electrónica",
+      "purchase_price": 0.0,
+      "price": 199.99,
+      "stock": 99,
+      "min_stock": 3,
+      "location": "B1",
+      "supplier": "LG",
+      "notes": "De color turquesa",
+      "tax_exempt": false
+    },
+    {
+      "id": 5,
+      "code": "PROD005",
+      "name": "Impresora Multifuncional",
+      "category": "Electrónica",
+      "purchase_price": 0.0,
+      "price": 149.99,
+      "stock": 16,
+      "min_stock": 2,
+      "location": "B2",
+      "supplier": "",
+      "notes": "",
+      "tax_exempt": false
+    },
+    {
+      "id": 6,
+      "code": "PROD006",
+      "name": "Adaptador HDMI / VGA",
+      "category": "Electrónica",
+      "purchase_price": 12.0,
+      "price": 15.0,
+      "stock": 6,
+      "min_stock": 4,
+      "location": "A7",
+      "supplier": "DR HOME",
+      "notes": "",
+      "tax_exempt": false
+    }
+  ],
+  "clients": [
+    {
+      "id": 1,
+      "name": "Andres Socorro",
+      "rif_ci": "30.2689.58",
+      "type": "Público",
+      "phone": "04125142837",
+      "email": "unisocorroandres@gmail.com",
+      "address": "mi casa",
+      "city": "Maracaibo",
+      "state": "Zulia",
+      "postal_code": "4004",
+      "notes": "mala paga",
+      "credit_days": 7,
+      "balance": 231.98840000000018,
+      "credit_start_date": "11/03/2026"
+    },
+    {
+      "id": 3,
+      "name": "Nubia Fernandez",
+      "rif_ci": "11609827",
+      "type": "Público",
+      "phone": "04126446181",
+      "email": "email@gmail.com",
+      "address": "Kilometro 27",
+      "city": "Mara",
+      "state": "Zulia",
+      "postal_code": "4004",
+      "notes": "",
+      "credit_days": 8,
+      "balance": 1235.3768000000002,
+      "credit_start_date": "11/03/2026"
+    },
+    {
+      "id": 4,
+      "name": "Sarai Villalobos",
+      "rif_ci": "28488750",
+      "type": "General",
+      "phone": "04126429969",
+      "email": "sarai68@gmail.com",
+      "address": "Sector el Museo",
+      "city": "Maracaibo",
+      "state": "Zulia",
+      "postal_code": "4004",
+      "notes": "",
+      "credit_days": 0,
+      "balance": 0.0,
+      "credit_start_date": null
+    }
+  ],
+  "invoices": [
+    {
+      "number": 1054,
+      "date": "15/09/2026 11:09",
+      "client": "Sarai Villalobos",
+      "subtotal": 1449.97,
+      "tax": 231.9952,
+      "total": 1681.9652,
+      "payment_method": "Tarjeta",
+      "status": "Pagada",
+      "due_date": null,
+      "is_credit": false,
+      "balance": 0.0,
+      "cancel_method": null,
+      "cancel_note": null,
+      "items": [
+        {
+          "product": "Adaptador HDMI / VGA",
+          "quantity": 10,
+          "price": 15.0,
+          "total": 150.0,
+          "tax_exempt": false,
+          "product_id": 6
+        },
+        {
+          "product": "Monitor 24\"",
+          "quantity": 2,
+          "price": 199.99,
+          "total": 399.98,
+          "tax_exempt": false,
+          "product_id": 4
+        },
+        {
+          "product": "Laptop HP 15",
+          "quantity": 1,
+          "price": 899.99,
+          "total": 899.99,
+          "tax_exempt": false,
+          "product_id": 1
+        }
+      ],
+      "payments": [],
+      "documents": [],
+      "client_id": 4,
+      "exchange_rate": null
+    },
+    {
+      "number": 1056,
+      "date": "17/09/2026 10:21",
+      "client": "Andres Socorro",
+      "subtotal": 1009.98,
+      "tax": 161.5968,
+      "total": 1171.5768,
+      "payment_method": "Transferencia",
+      "status": "Cancelada",
+      "due_date": null,
+      "is_credit": false,
+      "balance": 0.0,
+      "cancel_method": "rembolso",
+      "cancel_note": "",
+      "items": [
+        {
+          "product": "Laptop HP 15",
+          "quantity": 1,
+          "price": 899.99,
+          "total": 899.99,
+          "tax_exempt": false,
+          "product_id": 1
+        },
+        {
+          "product": "Adaptador HDMI / VGA",
+          "quantity": 2,
+          "price": 15.0,
+          "total": 30.0,
+          "tax_exempt": false,
+          "product_id": 6
+        },
+        {
+          "product": "Teclado Mecánico",
+          "quantity": 1,
+          "price": 79.99,
+          "total": 79.99,
+          "tax_exempt": false,
+          "product_id": 3
+        }
+      ],
+      "payments": [],
+      "documents": [],
+      "client_id": 1,
+      "exchange_rate": 847.4442
+    },
+    {
+      "number": 1057,
+      "date": "17/09/2026 11:49",
+      "client": "Andres Socorro",
+      "subtotal": 3429.7400000000002,
+      "tax": 548.7584,
+      "total": 3978.4984000000004,
+      "payment_method": "Pago móvil",
+      "status": "Cancelada",
+      "due_date": null,
+      "is_credit": false,
+      "balance": 0.0,
+      "cancel_method": "rembolso",
+      "cancel_note": "",
+      "items": [
+        {
+          "product": "Monitor 24\"",
+          "quantity": 5,
+          "price": 199.99,
+          "total": 999.95,
+          "tax_exempt": false,
+          "product_id": 4
+        },
+        {
+          "product": "Mouse Inalámbrico",
+          "quantity": 6,
+          "price": 29.99,
+          "total": 179.94,
+          "tax_exempt": false,
+          "product_id": 2
+        },
+        {
+          "product": "Impresora Multifuncional",
+          "quantity": 15,
+          "price": 149.99,
+          "total": 2249.8500000000004,
+          "tax_exempt": false,
+          "product_id": 5
+        }
+      ],
+      "payments": [],
+      "documents": [],
+      "client_id": 1,
+      "exchange_rate": 847.4442
+    },
+    {
+      "number": 1058,
+      "date": "17/09/2026 12:00",
+      "client": "Andres Socorro",
+      "subtotal": 5059.66,
+      "tax": 809.5456,
+      "total": 5869.2056,
+      "payment_method": "Pago móvil",
+      "status": "Pagada",
+      "due_date": null,
+      "is_credit": false,
+      "balance": 0.0,
+      "cancel_method": null,
+      "cancel_note": null,
+      "items": [
+        {
+          "product": "Adaptador HDMI / VGA",
+          "quantity": 2,
+          "price": 15.0,
+          "total": 30.0,
+          "tax_exempt": false,
+          "product_id": 6
+        },
+        {
+          "product": "Impresora Multifuncional",
+          "quantity": 33,
+          "price": 149.99,
+          "total": 4949.67,
+          "tax_exempt": false,
+          "product_id": 5
+        },
+        {
+          "product": "Teclado Mecánico",
+          "quantity": 1,
+          "price": 79.99,
+          "total": 79.99,
+          "tax_exempt": false,
+          "product_id": 3
+        }
+      ],
+      "payments": [],
+      "documents": [],
+      "client_id": 1,
+      "exchange_rate": 847.4442
+    },
+    {
+      "number": 1060,
+      "date": "18/09/2026 14:42",
+      "client": "Andres Socorro",
+      "subtotal": 79.99,
+      "tax": 12.798399999999999,
+      "total": 92.7884,
+      "payment_method": "Efectivo",
+      "status": "Pagada",
+      "due_date": null,
+      "is_credit": false,
+      "balance": 0.0,
+      "cancel_method": null,
+      "cancel_note": null,
+      "items": [
+        {
+          "product": "Teclado Mecánico",
+          "quantity": 1,
+          "price": 79.99,
+          "total": 79.99,
+          "tax_exempt": false,
+          "product_id": 3
+        }
+      ],
+      "payments": [],
+      "documents": [],
+      "client_id": 1,
+      "exchange_rate": 848.5458
+    }
+  ],
+  "invoice_counter": 1061,
+  "iva_rate": 0.16,
+  "exchange_rate": 848.5458,
+  "include_pending_in_dashboard": false,
+  "auto_update_rate": true,
+  "rate_source": "oficial",
+  "store_config": {
+    "store_name": "SISTEMA DE FACTURACIÓN AS",
+    "rif": "V-302689586",
+    "fiscal_domicile": "Urb Villatamares munipio mara, Zulia",
+    "phone": "+58 4125142837",
+    "store_url": "https://andrewdev2004.neocities.org/"
+  },
+  "version": "3.4"
+}
