@@ -1972,6 +1972,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title("Agregar Producto")
         dialog.geometry("300x250")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         
@@ -2067,6 +2068,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title(f"Agrupar: {desc}")
         dialog.geometry("350x200")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         
@@ -2208,6 +2210,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title("Procesar Pago")
         dialog.geometry("800x700")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         
@@ -2357,6 +2360,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.minsize(460, 460)
         dialog.resizable(True, True)
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
 
@@ -2610,6 +2614,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title("Nuevo Producto")
         dialog.geometry("500x550")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         
@@ -2777,6 +2782,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title("Editar Producto")
         dialog.geometry("500x550")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         
@@ -2934,6 +2940,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title("Nuevo Cliente")
         dialog.geometry("500x500")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         
@@ -3065,6 +3072,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title("Editar Cliente")
         dialog.geometry("500x500")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         
@@ -3222,6 +3230,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title("Nuevo Cliente Rápido")
         dialog.geometry("400x300")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         
@@ -3275,6 +3284,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title("Buscar Cliente")
         dialog.geometry("450x400")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
 
@@ -4165,6 +4175,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.geometry(f"{min(980, max(560, int(screen_w * 0.82)))}x{min(900, max(440, int(screen_h * 0.82)))}")
         dialog.minsize(560, 440)
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
 
@@ -4300,6 +4311,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title("Registrar Pago")
         dialog.geometry("840x220")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
 
@@ -5842,6 +5854,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title(f"Detalle de Producto: {product['name']}")
         dialog.geometry("800x800")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         dialog.bind("<Escape>", lambda e: safe_destroy(dialog))
@@ -5894,6 +5907,7 @@ class BillingSystem(ctk.CTkToplevel):
         dialog.title(f"Detalle de Cliente: {client['name']}")
         dialog.geometry("500x600")
         dialog.transient(self)
+        dialog.update_idletasks()
         dialog.grab_set()
         fade_in_window(dialog)
         
