@@ -2338,8 +2338,8 @@ class BillingSystem(ctk.CTkToplevel):
             self.update_counters()
             self.update_dashboard() # Auto-refresh dashboard after payment
             
-            ModernMessageBox.showinfo("Pago Completado", f"Factura #{self.invoice_counter} procesada exitosamente", parent=dialog)
             safe_destroy(dialog)
+            ModernMessageBox.showinfo("Pago Completado", f"Factura #{self.invoice_counter} procesada exitosamente", parent=self)
             self.create_new_invoice()
         
         # Vincular tecla Enter al diálogo

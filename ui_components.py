@@ -279,7 +279,24 @@ class ModernDialog(ctk.CTkToplevel):
         buttons: Iterable[str] = ("OK",),
         width: int = 420,
     ) -> None:
-        super().__init__(parent)
+        if parent is not None:
+            try:
+                if not parent.winfo_exists():
+                    parent = None
+            except tk.TclError:
+                parent = None
+        try:
+            super().__init__(parent)
+        except tk.TclError:
+            if parent is not None:
+                try:
+                    safe_destroy(self)
+                except (AttributeError, tk.TclError):
+                    pass
+                parent = None
+                super().__init__(None)
+            else:
+                raise
         self.result: Optional[str] = None
         self.title(title)
         self.width = width
@@ -380,11 +397,19 @@ class ModernMessageBox:
         parent = kwargs.pop("parent", None)
         kwargs.pop("icon", None)
         buttons = ("Sí", "No") if kind == "question" else ("OK",)
-        dlg = ModernDialog(
-            parent, title, message,
-            icon=icons.get(kind, "ℹ️"),
-            buttons=buttons,
-        )
+        try:
+            dlg = ModernDialog(
+                parent, title, message,
+                icon=icons.get(kind, "ℹ️"),
+                buttons=buttons,
+            )
+        except tk.TclError:
+            safe_destroy(parent)
+            dlg = ModernDialog(
+                None, title, message,
+                icon=icons.get(kind, "ℹ️"),
+                buttons=buttons,
+            )
         try:
             if parent is not None and parent.winfo_exists():
                 parent.wait_window(dlg)
